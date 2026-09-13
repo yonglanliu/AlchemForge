@@ -19,13 +19,13 @@ with output in **kcal/mol**.
 ## Run desktop app
 
 ```bash
-cd /home/runner/work/AlchemForge/AlchemForge
+# from the repository root
 python desktop_app.py
 ```
 
 ## Run tests
 
 ```bash
-cd /home/runner/work/AlchemForge/AlchemForge
+# from the repository root
 python -m unittest discover -s tests -v
 ```

@@ -2,6 +2,7 @@
 
 import tkinter as tk
 from tkinter import ttk
+from tkinter import messagebox
 
 from alchemforge import binding_free_energy_from_kd
 
@@ -41,7 +42,8 @@ class BindingFreeEnergyApp:
             dg = binding_free_energy_from_kd(kd, temperature)
             self.result_var.set(f"ΔG = {dg:.4f} kcal/mol")
         except ValueError as exc:
-            self.result_var.set(f"Error: {exc}")
+            self.result_var.set("ΔG =")
+            messagebox.showerror("Input error", str(exc))
 
 
 def main() -> None:
