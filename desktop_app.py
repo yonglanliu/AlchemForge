@@ -50,7 +50,8 @@ class BindingFreeEnergyApp:
             row=3, column=0, columnspan=2, sticky="w", pady=(4, 0)
         )
 
-        self.root.bind("<Return>", self.calculate)
+        self.kd_entry.bind("<Return>", self.calculate)
+        self.temp_entry.bind("<Return>", self.calculate)
         self.kd_entry.focus_set()
 
     def calculate(self, _event=None) -> None:
