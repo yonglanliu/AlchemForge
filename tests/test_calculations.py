@@ -16,11 +16,13 @@ class BindingFreeEnergyTests(unittest.TestCase):
         self.assertAlmostEqual(binding_free_energy_from_kd(1e-6, 300.0), expected, places=12)
 
     def test_invalid_kd_raises(self):
-        with self.assertRaisesRegex(ValueError, "Kd must be greater than 0"):
+        with self.assertRaisesRegex(ValueError, r"Kd must be greater than 0\.$"):
             binding_free_energy_from_kd(0.0)
 
     def test_invalid_temperature_raises(self):
-        with self.assertRaisesRegex(ValueError, "Temperature must be greater than 0 K"):
+        with self.assertRaisesRegex(
+            ValueError, r"Temperature must be greater than 0 K\.$"
+        ):
             binding_free_energy_from_kd(1e-6, 0.0)
 
 
