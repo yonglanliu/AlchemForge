@@ -29,14 +29,12 @@ class BindingFreeEnergyApp:
         frame = ttk.Frame(root, padding=12)
         frame.grid(row=0, column=0, sticky="nsew")
 
-        ttk.Label(frame, text="Kd (M):", underline=0).grid(
-            row=0, column=0, sticky="w", padx=(0, 8), pady=4
-        )
+        ttk.Label(frame, text="Kd (M):").grid(row=0, column=0, sticky="w", padx=(0, 8), pady=4)
         self.kd_var = tk.StringVar(value="1e-6")
         self.kd_entry = ttk.Entry(frame, textvariable=self.kd_var, width=18)
         self.kd_entry.grid(row=0, column=1, pady=4)
 
-        ttk.Label(frame, text="Temperature (K):", underline=0).grid(
+        ttk.Label(frame, text="Temperature (K):").grid(
             row=1, column=0, sticky="w", padx=(0, 8), pady=4
         )
         self.temp_var = tk.StringVar(value="298.15")
@@ -53,8 +51,6 @@ class BindingFreeEnergyApp:
         )
 
         self.root.bind("<Return>", self.calculate)
-        self.root.bind("<Alt-k>", lambda _event: self.kd_entry.focus_set())
-        self.root.bind("<Alt-t>", lambda _event: self.temp_entry.focus_set())
         self.kd_entry.focus_set()
 
     def calculate(self, _event=None) -> None:

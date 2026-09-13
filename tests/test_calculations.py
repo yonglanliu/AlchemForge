@@ -25,6 +25,12 @@ class BindingFreeEnergyTests(unittest.TestCase):
         ):
             binding_free_energy_from_kd(1e-6, 0.0)
 
+    def test_negative_temperature_raises(self):
+        with self.assertRaisesRegex(
+            ValueError, r"Temperature must be greater than 0 K\.$"
+        ):
+            binding_free_energy_from_kd(1e-6, -10.0)
+
 
 if __name__ == "__main__":
     unittest.main()
