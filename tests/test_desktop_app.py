@@ -27,7 +27,7 @@ class DesktopAppTests(unittest.TestCase):
         app = self._build_app("1e-6", "298.15")
         with patch("desktop_app.messagebox.showerror") as showerror:
             app.calculate()
-        self.assertRegex(app.result_var.get(), r"^ΔG = -?\d+\.\d{4} kcal/mol$")
+        self.assertEqual(app.result_var.get(), "ΔG = -8.1855 kcal/mol")
         showerror.assert_not_called()
 
     def test_calculate_shows_field_specific_error_for_non_numeric_input(self):
