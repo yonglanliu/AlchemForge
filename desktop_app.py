@@ -85,7 +85,12 @@ class BindingFreeEnergyApp:
 def main() -> None:
     if tk is None:
         raise RuntimeError("tkinter is required to run the desktop app.")
-    root = tk.Tk()
+    try:
+        root = tk.Tk()
+    except Exception as exc:
+        raise RuntimeError(
+            "Unable to initialize Tk desktop UI (display may be unavailable)."
+        ) from exc
     BindingFreeEnergyApp(root)
     root.mainloop()
 

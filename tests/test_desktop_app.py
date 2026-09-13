@@ -44,6 +44,15 @@ class DesktopAppTests(unittest.TestCase):
         self.assertEqual(app.result_var.get(), "ΔG =")
         showerror.assert_called_once_with("Input error", "Kd must be greater than 0.")
 
+    def test_calculate_shows_temperature_error_for_non_positive_input(self):
+        app = self._build_app("1e-6", "-1")
+        with patch("desktop_app.messagebox.showerror") as showerror:
+            app.calculate()
+        self.assertEqual(app.result_var.get(), "ΔG =")
+        showerror.assert_called_once_with(
+            "Input error", "Temperature must be greater than 0."
+        )
+
 
 if __name__ == "__main__":
     unittest.main()
