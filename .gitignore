@@ -1,0 +1,41 @@
+# Python environments
+.alchemforge_env/
+.venv/
+venv/
+env/
+
+# Python caches
+__pycache__/
+*.py[cod]
+*.egg-info/
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+
+# Build and packaging artifacts
+build/
+dist/
+*.egg
+pip-wheel-metadata/
+
+# Runtime output
+*.log
+*.out
+*.err
+*.pid
+core
+core.*
+
+# Generated workflow/task directories
+job_submit/*_setup.sbatch
+test/*/logs/
+test/*/common/
+test/*/apo/
+test/*/bound/
+test/*/para_ligand/
+
+# IDE and OS files
+.vscode/
+.idea/
+.DS_Store
+*.swp

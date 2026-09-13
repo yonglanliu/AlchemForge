@@ -1,0 +1,157 @@
+# ============================================================
+# Project
+# ============================================================
+
+ROOT="/data/liuy48/gromacs"  # Project root directory containing the workflow and input files
+
+JOB_NAME="fep_pmt_10ns"  # Name of the project/job directory under ROOT
+
+
+# ============================================================
+# Mutation definition
+# ============================================================
+
+CHAIN="B"  # Chain ID of the residue being mutated
+RESID=332  # Residue number to mutate
+MUT="TYR"  # Target residue name after mutation
+
+
+# ============================================================
+# Force field
+# ============================================================
+
+FF="amber99sb-star-ildn-mut"  # Force field used for the protein and hybrid topology
+WATER="tip3p"  # Water model used during solvation
+
+
+# ============================================================
+# Input Information
+# ============================================================
+
+COMPLEX="${ROOT}/input/WT_noh.pdb"  # Protein-ligand complex structure used as the starting point
+
+LIGAND_MOL2="${ROOT}/input/PMT3.mol2"  # Input ligand structure in MOL2 format
+
+LIGAND_CHARGE_METHOD="bcc"  # Charge assignment method for the ligand: bcc or user
+
+LIGAND_ITP="${ROOT}/input/PMT3.itp"  # Ligand topology file (ITP) used in the bound setup
+
+LIGAND_GRO="${ROOT}/input/PMT3.gro"  # Ligand coordinate file in GRO format
+
+LIGAND_RESNAME="PMT"  # Residue name of the ligand as defined in the topology
+
+LIGAND_CHARGE=0  # Expected net charge of the ligand
+
+
+# ============================================================
+# System preparation
+# ============================================================
+
+# Minimum distance between solute and box edge, nm
+BOX_DISTANCE=1.2  # Box padding around the solute, in nanometers
+
+# Salt concentration, mol/L
+ION_CONC=0.15  # Final ionic strength used for neutralization, mol/L
+
+# Temperature, K
+TEMPERATURE=300  # Simulation temperature in kelvin
+
+# Pressure, bar
+PRESSURE=1.0  # Simulation pressure in bar
+
+
+# ============================================================
+# GROMACS
+# ============================================================
+
+GMX="gmx"  # GROMACS executable to use for setup and MD runs
+
+
+# ============================================================
+# CPU / GPU settings
+# ============================================================
+MDRUN_EM_OPTIONS="
+-ntmpi 1
+"  # MPI settings for the energy minimization step
+
+MDRUN_MD_OPTIONS="
+-ntmpi 1
+-nb gpu
+-pme gpu
+"  # GPU-enabled settings for NVT/NPT equilibration and general MD runs
+
+
+
+# Equilibrium FEP production
+MDRUN_FEP_OPTIONS="
+-ntmpi 1
+-nb gpu
+-pme gpu
+"  # GPU settings used for the production FEP window runs
+
+
+# Nonequilibrium switching
+MDRUN_SWITCH_OPTIONS="
+-ntmpi 1
+-nb gpu
+-pme gpu
+"  # GPU settings used for nonequilibrium switching runs if enabled
+
+
+# ============================================================
+# General MD settings
+# ============================================================
+NREP=3             # Number of independent replicate simulations per leg
+START_REP=1        # First replicate index used for the job set
+
+DT_PS=0.002        # MD timestep in picoseconds
+
+
+# ------------------------------------------------------------
+# FEP simulation
+# ------------------------------------------------------------
+LAMBDA_MODE="single"  # Lambda schedule mode for the alchemical transformation
+NLAMBDA=17             # Number of lambda windows for the FEP schedule
+
+FEP_LAMBDA_FUNCTION="cosine"  # Lambda spacing scheme: cosine, linear, or power
+FEP_LAMBDA_POWER=2.0           # Exponent used when lambda function is set to power
+
+FEP_DT_PS=0.002                 # Timestep used for the FEP MD integration, in ps
+
+FEP_NVT_PS=0.5                  # NVT equilibration length, in ns
+FEP_NPT_PS=1.0                  # NPT equilibration length, in ns
+FEP_PROD_NS=10                  # Production run length, in ns
+
+MAX_FEP_JOBS=$(( NREP * NLAMBDA ))  # Maximum simultaneous lambda-window jobs allowed
+
+FEP_NVT_STEPS=$(
+    awk \
+        -v time_ps="${FEP_NVT_PS}" \
+        -v dt="${FEP_DT_PS}" \
+        'BEGIN {
+            printf "%.0f", time_ps * 1000.0 / dt
+        }'
+)
+
+FEP_NPT_STEPS=$(
+    awk \
+        -v time_ps="${FEP_NPT_PS}" \
+        -v dt="${FEP_DT_PS}" \
+        'BEGIN {
+            printf "%.0f", time_ps * 1000.0 / dt
+        }'
+)
+
+FEP_PROD_STEPS=$(
+    awk \
+        -v time_ns="${FEP_PROD_NS}" \
+        -v dt="${FEP_DT_PS}" \
+        'BEGIN {
+            printf "%.0f", time_ns * 1000.0 / dt
+        }'
+)
+
+N_FEP_TASKS=$(( 2 * NREP * NLAMBDA ))  # Expected equilibrium FEP array size
+
+
+

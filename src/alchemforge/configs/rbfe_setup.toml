@@ -1,0 +1,50 @@
+[general]
+task_name = "rbfe"
+engine = "gromacs"
+temperature = 300.0
+
+[input]
+protein = ""
+ligand_a = ""
+ligand_b = ""
+mapping = ""
+
+[forcefield]
+protein_forcefield = "amber99sb-star-ildn-mut"
+ligand_forcefield = "gaff2"
+water_model = "tip3p"
+
+[simulation]
+dt = 0.002
+nsteps_equilibration = 500000
+nsteps_production = 5000000
+
+[lambda]
+coulomb_lambdas = [
+    0.0,
+    0.25,
+    0.5,
+    0.75,
+    1.0,
+]
+
+vdw_lambdas = [
+    0.0,
+    0.1,
+    0.2,
+    0.3,
+    0.4,
+    0.5,
+    0.6,
+    0.7,
+    0.8,
+    0.9,
+    1.0,
+]
+
+[resources]
+nodes = 1
+ntasks = 1
+cpus_per_task = 8
+gpus = 1
+walltime = "24:00:00"
