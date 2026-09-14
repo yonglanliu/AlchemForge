@@ -43,6 +43,38 @@ Install ACPYPE in the same environment if it is not provided by your system:
 python -m pip install acpype
 ```
 
+Build the optional C++ OpenGL viewer:
+
+```bash
+cd alchemforge_viewer
+cmake -S . -B build
+cmake --build build -j4
+```
+
+The executable is created at:
+
+```text
+alchemforge_viewer/build/alchemforge_viewer
+```
+
+Run it from the viewer directory with:
+
+```bash
+./build/alchemforge_viewer
+```
+
+The native viewer supports interactive controls:
+
+- Left-drag: rotate the structure
+- Mouse wheel: zoom
+- `1`: cartoon backbone mode
+- `2`: loop/backbone trace mode
+- `3`: ball-and-stick atom mode
+- `4`: spacefill mode
+- `Esc`: close the viewer
+
+From the Qt desktop, use **File -> Open C++ Viewer...** to select a PDB structure and launch the native viewer.
+
 ## Run
 
 ```bash
