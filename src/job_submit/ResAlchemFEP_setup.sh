@@ -13,44 +13,35 @@ set -e
 # ============================================================
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-REPO_ROOT="$(cd "${SCRIPT_DIR}/../../.." && pwd)"
-DEFAULT_CONFIGS=(
-    "${REPO_ROOT}/config/Res_Alchemical_FEP_config.inp"
-    "${SCRIPT_DIR}/../config/Res_Alchemical_FEP_config.inp"
-)
+CONFIG_FILE="${1:-${SCRIPT_DIR}/ResAlchemFEP_config.inp}"
 
-CONFIG_FILE="${1:-}"
-if [[ -z "${CONFIG_FILE}" ]]; then
-    CONFIG_FILE=""
-    for candidate in "${DEFAULT_CONFIGS[@]}"; do
-        if [[ -f "${candidate}" ]]; then
-            CONFIG_FILE="${candidate}"
-            break
-        fi
-    done
-fi
+REPO_ROOT="$(
+    python -c '
+from pathlib import Path
+import alchemforge
+
+print(Path(alchemforge.__file__).resolve().parents[2])
+'
+)"
 
 if [[ ! -f "${CONFIG_FILE}" ]]; then
-    echo "ERROR: Config file not found. Checked:"
-    for candidate in "${DEFAULT_CONFIGS[@]}"; do
-        echo "    ${candidate}"
-    done
+    echo "ERROR: Configuration file not found: ${CONFIG_FILE}"
+    echo "Usage: $0 /path/to/<job_name>_config.inp"
     exit 1
 fi
 
 CONFIG_FILE="$(readlink -f "${CONFIG_FILE}")"
-
 source "${CONFIG_FILE}"
 
 echo "Config file:    ${CONFIG_FILE}"
-echo "Root Directory: ${ROOT}"
+echo "Working Directory: ${WORK_DIR}"
 
 # ============================================================
 # Check required variables
 # ============================================================
 
 REQUIRED_VARS=(
-    ROOT
+    WORK_DIR
     GMX
     FF
     WATER
@@ -95,116 +86,25 @@ fi
 
 END_REP=$(( START_REP + NREP - 1 ))
 
-LIGAND_ITP="${ROOT}/${JOB_NAME}/para_ligand/${LIGAND_RESNAME}.acpype/${LIGAND_RESNAME}_GMX.itp"
+LIGAND_ITP="${WORK_DIR}/${JOB_NAME}/para_ligand/${LIGAND_RESNAME}.acpype/${LIGAND_RESNAME}_GMX.itp"
 export LIGAND_ITP
 
 
 # ============================================================
-# Project directory + config snapshot
-#
-# Keep an exact copy of the configuration used for this project.
-# Example:
-#
-#     JOB_NAME=fep_pmt
-#
-# creates:
-#
-#     ${ROOT}/${JOB_NAME}/${JOB_NAME}_Res_Alchemical_FEP_config.inp
+# Project directory
 # ============================================================
 
-PROJECT_DIR="${ROOT}/${JOB_NAME}"
+PROJECT_DIR="${WORK_DIR}/${JOB_NAME}"
 mkdir -p "${PROJECT_DIR}"
 
 IONS_MDP="${PROJECT_DIR}/mdp/ions.mdp"
-
-PROJECT_INPUT_DIR="${PROJECT_DIR}/input"
-mkdir -p "${PROJECT_INPUT_DIR}"
-
-# Stage project-local copies of the required inputs for reproducibility.
-copy_input_to_project() {
-    local src="$1"
-    local dst_name="$2"
-
-    if [[ -z "${src}" || ! -f "${src}" ]]; then
-        return 0
-    fi
-
-    cp -f "${src}" "${PROJECT_INPUT_DIR}/${dst_name}"
-}
-
-copy_input_to_project "${COMPLEX}" "$(basename "${COMPLEX}")"
-copy_input_to_project "${LIGAND_MOL2}" "$(basename "${LIGAND_MOL2}")"
-if [[ -n "${LIGAND_GRO:-}" ]]; then
-    copy_input_to_project "${LIGAND_GRO}" "$(basename "${LIGAND_GRO}")"
-fi
-
-CONFIG_SNAPSHOT="${PROJECT_DIR}/${JOB_NAME}_Res_Alchemical_FEP_config.inp"
-
-if [[ "$(readlink -f "${CONFIG_FILE}")" != "$(readlink -m "${CONFIG_SNAPSHOT}")" ]]; then
-    cp -f "${CONFIG_FILE}" "${CONFIG_SNAPSHOT}"
-fi
-
-rewrite_snapshot_inputs() {
-    local snapshot_path="$1"
-    local complex_path="${COMPLEX}"
-    local ligand_mol2_path="${LIGAND_MOL2}"
-    local ligand_itp_path="${LIGAND_ITP}"
-    local ligand_gro_path="${LIGAND_GRO:-}"
-
-    if [[ ! -f "${snapshot_path}" ]]; then
-        return 0
-    fi
-
-    export CONFIG_SNAPSHOT="${snapshot_path}"
-    export COMPLEX_PATH="${complex_path}"
-    export LIGAND_MOL2_PATH="${ligand_mol2_path}"
-    export LIGAND_ITP_PATH="${ligand_itp_path}"
-    export LIGAND_GRO_PATH="${ligand_gro_path}"
-
-    python - <<'PY'
-import os, re
-from pathlib import Path
-
-snapshot = Path(os.environ["CONFIG_SNAPSHOT"])
-replacements = {
-    "COMPLEX": os.environ["COMPLEX_PATH"],
-    "LIGAND_MOL2": os.environ["LIGAND_MOL2_PATH"],
-    "LIGAND_ITP": os.environ["LIGAND_ITP_PATH"],
-}
-if os.environ.get("LIGAND_GRO_PATH"):
-    replacements["LIGAND_GRO"] = os.environ["LIGAND_GRO_PATH"]
-
-text = snapshot.read_text()
-for key, value in replacements.items():
-    pattern = re.compile(rf'^(\s*{re.escape(key)}\s*=\s*)(["\']?)(.*?)(\2)\s*$', re.M)
-    if pattern.search(text):
-        text = pattern.sub(rf'\1"{value}"', text, count=1)
-    else:
-        text += f'\n{key}="{value}"\n'
-
-snapshot.write_text(text)
-PY
-}
-
-rewrite_snapshot_inputs "${CONFIG_SNAPSHOT}"
-
-# Use project-local copies for downstream processing.
-COMPLEX="${PROJECT_INPUT_DIR}/$(basename "${COMPLEX}")"
-LIGAND_MOL2="${PROJECT_INPUT_DIR}/$(basename "${LIGAND_MOL2}")"
-if [[ -n "${LIGAND_GRO:-}" && -f "${PROJECT_INPUT_DIR}/$(basename "${LIGAND_GRO}")" ]]; then
-    LIGAND_GRO="${PROJECT_INPUT_DIR}/$(basename "${LIGAND_GRO}")"
-fi
-
-echo "Config snapshot: ${CONFIG_SNAPSHOT}"
-
-echo "Project input directory: ${PROJECT_INPUT_DIR}"
-
+cp "${REPO_ROOT}/src/alchemforge/mdp/ions.mdp" "${IONS_MDP}"
 
 # ============================================================
 # Logging
 # ============================================================
 
-LOG_DIR="${ROOT}/${JOB_NAME}/logs"
+LOG_DIR="${WORK_DIR}/${JOB_NAME}/logs"
 mkdir -p "${LOG_DIR}"
 
 LOG_FILE="${LOG_DIR}/01_prepare_system.log"
@@ -216,7 +116,7 @@ echo "============================================================"
 echo "System preparation started"
 echo "============================================================"
 echo "Date:              $(date)"
-echo "Root directory:    ${ROOT}"
+echo "Working directory:    ${WORK_DIR}"
 echo "Complex:           ${COMPLEX}"
 echo "Mutation:          ${CHAIN} ${RESID} ${MUT}"
 echo "Force field:       ${FF}"
@@ -225,7 +125,6 @@ echo "Ligand residue:    ${LIGAND_RESNAME}"
 echo "Ligand topology:   ${LIGAND_ITP}"
 echo "Log file:          ${LOG_FILE}"
 echo "Config file:       ${CONFIG_FILE}"
-echo "Config snapshot:   ${CONFIG_SNAPSHOT}"
 echo "Start replicate:   ${START_REP}"
 echo "End replicate:     ${END_REP}"
 echo "Replicates to add: ${NREP}"
@@ -252,7 +151,7 @@ prepare_ligand() {
     fi
 
     if [[ "${ligand_input}" != /* ]]; then
-        ligand_input="${ROOT}/${ligand_input}"
+        ligand_input="${WORK_DIR}/${ligand_input}"
     fi
 
     if [[ ! -f "${ligand_input}" ]]; then
@@ -263,7 +162,7 @@ prepare_ligand() {
 
     ligand_dir="$(dirname "${ligand_input}")"
     ligand_basename="$(basename "${ligand_input}" .mol2)"
-    ligand_param_dir="${ROOT}/${JOB_NAME}/para_ligand"
+    ligand_param_dir="${WORK_DIR}/${JOB_NAME}/para_ligand"
     acpype_dir="${ligand_param_dir}/${LIGAND_RESNAME}.acpype"
     lig_itp="${acpype_dir}/${LIGAND_RESNAME}_GMX.itp"
     lig_gro="${acpype_dir}/${LIGAND_RESNAME}_GMX.gro"
@@ -272,7 +171,7 @@ prepare_ligand() {
     # Keep a project-local copy of the para-ligand helper script.
     local para_src="${SCRIPT_DIR}/para_ligand.sh"
     if [[ ! -f "${para_src}" ]]; then
-        para_src="${ROOT}/scripts/common/para_ligand.sh"
+        para_src="${WORK_DIR}/scripts/common/para_ligand.sh"
     fi
     local para_copy="${ligand_param_dir}/${LIGAND_RESNAME}_para_ligand.sh"
     if [[ -f "${para_src}" ]]; then
@@ -333,12 +232,6 @@ prepare_ligand() {
     cp "${lig_gro}" "${ligand_dir}/${ligand_basename}.gro"
     cp "${lig_top}" "${ligand_dir}/${ligand_basename}.top"
 
-    copy_input_to_project "${LIGAND_ITP}" "$(basename "${LIGAND_ITP}")"
-    if [[ -f "${PROJECT_INPUT_DIR}/$(basename "${LIGAND_ITP}")" ]]; then
-        LIGAND_ITP="${PROJECT_INPUT_DIR}/$(basename "${LIGAND_ITP}")"
-        export LIGAND_ITP
-    fi
-
     echo "Generated ligand topology:"
     echo "    ${LIGAND_ITP}"
 }
@@ -372,9 +265,9 @@ fi
 # Define directories
 # ============================================================
 
-COMMON_DIR="${ROOT}/${JOB_NAME}/common"
-APO_SETUP="${ROOT}/${JOB_NAME}/apo/setup"
-BOUND_SETUP="${ROOT}/${JOB_NAME}/bound/setup"
+COMMON_DIR="${WORK_DIR}/${JOB_NAME}/common"
+APO_SETUP="${WORK_DIR}/${JOB_NAME}/apo/setup"
+BOUND_SETUP="${WORK_DIR}/${JOB_NAME}/bound/setup"
 
 mkdir -p "${COMMON_DIR}"
 mkdir -p "${APO_SETUP}"
@@ -949,6 +842,16 @@ def element_from_atom_name(name):
     return upper[0]
 
 
+def element_from_itp_type(atom_type):
+    """Map a GAFF/ACPYPE atom type to its element symbol."""
+    atom_type = atom_type.strip().upper()
+    if atom_type.startswith("CL"):
+        return "CL"
+    if atom_type.startswith("BR"):
+        return "BR"
+    return atom_type[:1] or "?"
+
+
 # ============================================================
 # Mapping QC
 # ============================================================
@@ -1010,9 +913,7 @@ with mapping_file.open("w") as f:
             pdb_atom["name"]
         )
 
-        itp_element = element_from_atom_name(
-            itp_atom["name"]
-        )
+        itp_element = element_from_itp_type(itp_atom["type"])
 
         if pdb_element != itp_element:
 
@@ -1062,7 +963,7 @@ with mapping_file.open("w") as f:
 if name_mismatches:
 
     print()
-    print("ERROR: Atom name/order mismatch detected:")
+    print("WARNING: ACPYPE renamed ligand atoms:")
 
     for i, pdb_name, itp_name in name_mismatches:
         print(
@@ -1095,17 +996,33 @@ if element_mismatches:
             f"ITP={itp_name}"
         )
 
-if (
-    name_mismatches
-    or residue_mismatches
-    or element_mismatches
-):
-
+if residue_mismatches or element_mismatches:
     print()
     print("Ligand mapping QC: FAILED")
     print(f"Mapping report: {mapping_file}")
-
     sys.exit(1)
+
+print("Ligand mapping QC: PASS")
+
+# ACPYPE may rename atoms. Rewrite the ligand coordinate records with the
+# ITP names so GROMACS sees identical atom names in solvated.gro and topol.top.
+pdb_lines = Path("ligand.pdb").read_text().splitlines()
+atom_index = 0
+normalized_lines = []
+for line in pdb_lines:
+    if line.startswith(("ATOM", "HETATM")):
+        if atom_index >= len(itp_atoms):
+            raise SystemExit("ERROR: Ligand atom normalization exceeded ITP atom count.")
+        replacement = f"{itp_atoms[atom_index]['name'][:4]:>4}"
+        line = line[:12] + replacement + line[16:]
+        atom_index += 1
+    normalized_lines.append(line)
+
+if atom_index != len(itp_atoms):
+    raise SystemExit("ERROR: Ligand atom normalization count mismatch.")
+
+Path("ligand.pdb").write_text("\n".join(normalized_lines) + "\n")
+print("Normalized ligand PDB atom names to match ligand.itp.")
 
 
 # ============================================================
@@ -1126,7 +1043,7 @@ print(f"ITP total ligand charge: {total_charge:.6f}")
 # ============================================================
 
 print()
-print("Atom-name QC:       PASS")
+print("Atom-name QC:       INFO (ACPYPE names may be renumbered)")
 print("Atom-order QC:      PASS")
 print("Residue-name QC:    PASS")
 print("Element mapping QC: PASS")
@@ -1520,7 +1437,7 @@ echo "Ligand QC report:"
 echo "    ${BOUND_SETUP}/ligand_qc/ligand_atom_mapping.tsv"
 echo
 echo "Full log:"
-echo "    ${ROOT}/${JOB_NAME}/logs/${LOG_FILE}"
+echo "    ${WORK_DIR}/${JOB_NAME}/logs/${LOG_FILE}"
 echo "============================================================"
 
 
@@ -1543,7 +1460,7 @@ echo "============================================================"
 for LEG in apo bound
 do
 
-    BASE_SETUP="${ROOT}/${JOB_NAME}/${LEG}/setup"
+    BASE_SETUP="${WORK_DIR}/${JOB_NAME}/${LEG}/setup"
 
     # --------------------------------------------------------
     # QC base setup
@@ -1569,7 +1486,7 @@ do
     for REP in $(seq "${START_REP}" "${END_REP}")
     do
 
-        REP_SETUP="${ROOT}/${JOB_NAME}/${LEG}/rep_${REP}/setup"
+        REP_SETUP="${WORK_DIR}/${JOB_NAME}/${LEG}/rep_${REP}/setup"
 
         echo
         echo "Preparing:"
@@ -1639,7 +1556,7 @@ do
     for REP in $(seq "${START_REP}" "${END_REP}")
     do
 
-        SETUP="${ROOT}/${JOB_NAME}/${LEG}/rep_${REP}/setup"
+        SETUP="${WORK_DIR}/${JOB_NAME}/${LEG}/rep_${REP}/setup"
 
         printf "%-8s rep_%d : " "${LEG}" "${REP}"
 
@@ -1667,7 +1584,5 @@ echo "============================================================"
 echo
 echo "Configuration used:"
 echo "    ${CONFIG_FILE}"
-echo "Configuration snapshot:"
-echo "    ${CONFIG_SNAPSHOT}"
 echo "Replicate range prepared/reused:"
 echo "    rep_${START_REP} through rep_${END_REP}"

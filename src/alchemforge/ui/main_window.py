@@ -4,12 +4,13 @@ import sys
 import math
 import re
 import subprocess
+import tempfile
 from pathlib import Path
 
 from PyQt5.QtCore import Qt, QSize, QPointF, QProcess, QTimer
-from PyQt5.QtGui import QColor, QFont, QLinearGradient, QPainter, QPainterPath, QPen, QBrush
+from PyQt5.QtGui import QColor, QFont, QLinearGradient, QPainter, QPainterPath, QPen, QBrush, QWindow
 from PyQt5.QtWidgets import (
-    QAction, QApplication, QFileDialog, QFrame, QGridLayout, QHBoxLayout,
+    QAction, QApplication, QFileDialog, QComboBox, QFrame, QGridLayout, QHBoxLayout,
     QHeaderView, QLabel, QLineEdit, QListWidget, QListWidgetItem, QMainWindow,
     QMessageBox, QPushButton, QSizePolicy, QSplitter, QStatusBar, QTableWidget,
     QTableWidgetItem, QToolBar, QVBoxLayout, QWidget, QStyle, QStackedWidget
@@ -232,6 +233,13 @@ class MainWindow(QMainWindow):
         self.working_directory = os.getcwd()
         self.job_records = []
         self.job_processes = {}
+        self.viewer_process = None
+        self.viewer_window = None
+        self.viewer_output = b""
+        self.viewer_control_path = None
+        self.dssp_process = None
+        self.viewer_structure_path = None
+        self.viewer_dssp_path = None
 
         self.setWindowTitle("AlchemForge")
         self.resize(1500, 930)
@@ -254,6 +262,11 @@ class MainWindow(QMainWindow):
         a = QAction("Open Project...", self)
         a.setShortcut("Ctrl+O")
         a.triggered.connect(self.open_project)
+        fm.addAction(a)
+
+        a = QAction("Open C++ Viewer...", self)
+        a.setShortcut("Ctrl+V")
+        a.triggered.connect(self.open_cpp_viewer)
         fm.addAction(a)
 
         self.recent_menu = fm.addMenu("Open Recent Project")
@@ -358,6 +371,78 @@ class MainWindow(QMainWindow):
         self.center_stack.addWidget(self.home_page)
         self.jobs_page = self.build_jobs_page()
         self.center_stack.addWidget(self.jobs_page)
+        self.viewer_page = QWidget()
+        viewer_page_layout = QHBoxLayout(self.viewer_page)
+        viewer_page_layout.setContentsMargins(0, 0, 0, 0)
+
+        viewer_canvas = QFrame()
+        viewer_canvas.setObjectName("Card")
+        self.viewer_layout = QVBoxLayout(viewer_canvas)
+        self.viewer_layout.setContentsMargins(10, 10, 10, 10)
+        self.viewer_layout.addWidget(QLabel("AlchemViewer"))
+        self.viewer_layout.addWidget(QLabel("Open a PDB file to start AlchemViewer."))
+        viewer_page_layout.addWidget(viewer_canvas, 1)
+
+        viewer_controls = QFrame()
+        viewer_controls.setObjectName("RightCard")
+        viewer_controls.setMinimumWidth(230)
+        viewer_controls.setMaximumWidth(280)
+        controls_layout = QVBoxLayout(viewer_controls)
+        controls_layout.setContentsMargins(14, 14, 14, 14)
+        controls_layout.addWidget(QLabel("Objects"))
+        self.viewer_object_label = QLabel("All")
+        self.viewer_object_label.setObjectName("Muted")
+        controls_layout.addWidget(self.viewer_object_label)
+        controls_layout.addSpacing(12)
+        controls_layout.addWidget(QLabel("Chain"))
+        self.viewer_chain_combo = QComboBox()
+        self.viewer_chain_combo.addItem("All chains")
+        controls_layout.addWidget(self.viewer_chain_combo)
+        controls_layout.addSpacing(12)
+        controls_layout.addWidget(QLabel("Background"))
+        self.viewer_background_combo = QComboBox()
+        self.viewer_background_combo.addItems([
+            "Black", "White", "Dark gray", "Light gray"
+        ])
+        controls_layout.addWidget(self.viewer_background_combo)
+        controls_layout.addSpacing(12)
+        controls_layout.addWidget(QLabel("Show As"))
+
+        self.viewer_style_combo = QComboBox()
+        self.viewer_style_combo.addItems([
+            "Lines", "Sticks", "Spheres", "Dots", "Surface", "Mesh",
+            "Cartoon", "Ribbon", "Labels", "Loop", "Ball and stick", "Spacefill"
+        ])
+        self.viewer_style_combo.setCurrentText("Cartoon")
+        controls_layout.addWidget(self.viewer_style_combo)
+        for style_name in (
+            "Cartoon", "Ribbon", "Loop", "Lines", "Sticks", "Spheres",
+            "Dots", "Surface", "Mesh", "Labels", "Ball and stick", "Spacefill"
+        ):
+            style_button = QPushButton(style_name)
+            style_button.setCheckable(True)
+            style_button.setChecked(style_name == "Cartoon")
+            style_button.clicked.connect(
+                lambda checked, value=style_name: self.select_viewer_style(value)
+            )
+            controls_layout.addWidget(style_button)
+        controls_layout.addSpacing(12)
+        controls_layout.addWidget(QLabel("Color By"))
+        self.viewer_color_combo = QComboBox()
+        self.viewer_color_combo.addItems([
+            "Element", "Spectrum", "Secondary structure", "Chain"
+        ])
+        self.viewer_color_combo.setCurrentText("Secondary structure")
+        controls_layout.addWidget(self.viewer_color_combo)
+        self.viewer_color_combo.setToolTip(
+            "Choose element, spectrum, secondary-structure, or chain coloring"
+        )
+        controls_layout.addSpacing(18)
+        controls_layout.addWidget(QLabel("Controls"))
+        controls_layout.addWidget(QLabel("Left drag: rotate\nWheel: zoom\nEsc: close viewer"))
+        controls_layout.addStretch()
+        viewer_page_layout.addWidget(viewer_controls)
+        self.center_stack.addWidget(self.viewer_page)
         split.addWidget(self.center_stack)
         split.addWidget(self.build_right())
         split.setSizes([220,930,320])
@@ -917,6 +1002,152 @@ class MainWindow(QMainWindow):
         self.status_project.setText(project.stem)
         self.setWindowTitle(f"AlchemForge — {project.stem}")
         self.add_recent(project)
+
+    def open_cpp_viewer(self):
+        structure, _ = QFileDialog.getOpenFileName(
+            self,
+            "Open Structure in AlchemViewer",
+            self.working_directory,
+            "PDB Structures (*.pdb *.ent);;All Files (*)",
+        )
+        if not structure:
+            return
+
+        viewer = (
+            Path(__file__).resolve().parents[3]
+            / "alchemforge_viewer"
+            / "build"
+            / "alchemforge_viewer"
+        )
+        if not viewer.is_file():
+            QMessageBox.warning(
+                self,
+                "Viewer Not Built",
+                f"Build the C++ viewer first:\n\n{viewer}",
+            )
+            return
+
+        control = tempfile.NamedTemporaryFile(
+            mode="w",
+            prefix="alchemviewer_",
+            suffix=".control",
+            delete=False,
+        )
+        control.write("style cartoon\ncolor secondary\nchain all\nbackground black\n")
+        control.close()
+        self.viewer_control_path = control.name
+        self.viewer_style_combo.currentTextChanged.connect(self.write_viewer_control)
+        self.viewer_color_combo.currentTextChanged.connect(self.write_viewer_control)
+        self.viewer_chain_combo.currentTextChanged.connect(self.write_viewer_control)
+        self.viewer_background_combo.currentTextChanged.connect(self.write_viewer_control)
+        self.center_stack.setCurrentWidget(self.viewer_page)
+        dssp_output = tempfile.NamedTemporaryFile(
+            prefix="alchemviewer_",
+            suffix=".dssp",
+            delete=False,
+        )
+        dssp_output.close()
+        self.viewer_structure_path = structure
+        self.viewer_object_label.setText(Path(structure).stem)
+        self.viewer_chain_combo.clear()
+        self.viewer_chain_combo.addItem("All chains")
+        chains = set()
+        for line in Path(structure).read_text(errors="replace").splitlines():
+            if line.startswith(("ATOM  ", "HETATM")) and len(line) > 21:
+                chain = line[21].strip()
+                if chain:
+                    chains.add(chain)
+        self.viewer_chain_combo.addItems(sorted(chains))
+        self.viewer_dssp_path = dssp_output.name
+        self.dssp_process = QProcess(self)
+        self.dssp_process.setProgram("bash")
+        self.dssp_process.setArguments([
+            "-lc",
+            "module load DSSP/2.3.0 && mkdssp -i \"$1\" -o \"$2\"",
+            "alchemforge-dssp",
+            structure,
+            self.viewer_dssp_path,
+        ])
+        self.dssp_process.finished.connect(
+            lambda code, _status: self.start_cpp_viewer(
+                viewer,
+                code == 0,
+            )
+        )
+        self.dssp_process.start()
+
+    def select_viewer_style(self, style):
+        self.viewer_style_combo.setCurrentText(style)
+
+    def start_cpp_viewer(self, viewer, dssp_succeeded):
+        self.viewer_process = QProcess(self)
+        self.viewer_process.setProgram(str(viewer))
+        arguments = [self.viewer_structure_path, self.viewer_control_path]
+        if dssp_succeeded:
+            arguments.append(self.viewer_dssp_path)
+        self.viewer_process.setArguments(arguments)
+        self.viewer_process.readyReadStandardOutput.connect(
+            self.embed_viewer_output
+        )
+        self.viewer_process.start()
+
+    def write_viewer_control(self):
+        if not self.viewer_control_path:
+            return
+        style = {
+            "Lines": "lines",
+            "Sticks": "sticks",
+            "Spheres": "spheres",
+            "Dots": "dots",
+            "Surface": "surface",
+            "Mesh": "mesh",
+            "Spacefill": "spacefill",
+            "Ball and stick": "ball_and_stick",
+            "Cartoon": "cartoon",
+            "Ribbon": "ribbon",
+            "Labels": "labels",
+            "Loop": "loop",
+        }[self.viewer_style_combo.currentText()]
+        color = {
+            "Element": "element",
+            "Spectrum": "spectrum",
+            "Secondary structure": "secondary",
+            "Chain": "chain",
+        }[self.viewer_color_combo.currentText()]
+        chain = self.viewer_chain_combo.currentText()
+        chain = "all" if chain == "All chains" else chain
+        background = {
+            "Black": "black",
+            "White": "white",
+            "Dark gray": "dark_gray",
+            "Light gray": "light_gray",
+        }[self.viewer_background_combo.currentText()]
+        Path(self.viewer_control_path).write_text(
+            f"style {style}\ncolor {color}\nchain {chain}\n"
+            f"background {background}\n",
+            encoding="utf-8",
+        )
+
+    def embed_viewer_output(self):
+        self.viewer_output += bytes(
+            self.viewer_process.readAllStandardOutput()
+        )
+        marker = b"ALCHEMVIEWER_X11_WINDOW="
+        if marker not in self.viewer_output or self.viewer_window is not None:
+            return
+
+        line = self.viewer_output.split(marker, 1)[1].splitlines()[0]
+        try:
+            native_id = int(line.decode().strip())
+        except ValueError:
+            return
+
+        self.viewer_window = QWindow.fromWinId(native_id)
+        container = QWidget.createWindowContainer(
+            self.viewer_window,
+            self.viewer_page,
+        )
+        self.viewer_layout.addWidget(container, 1)
 
     def close_project(self):
         self.project_path = None

@@ -564,7 +564,7 @@ class ResAlchemFEPDialog(QDialog):
             system["add_salt"]
         ).lower()
 
-        root_directory = str(
+        work_directory = str(
             Path(self.working_directory or ".").expanduser().resolve()
         )
         protein_path = system["protein_structure"]
@@ -591,7 +591,7 @@ class ResAlchemFEPDialog(QDialog):
 # Configuration
 # ============================================================
 
-ROOT="{root_directory}"  # Project root directory containing the workflow and input files
+WORK_DIR="{work_directory}"  # Project root directory containing the workflow and input files
 
 JOB_NAME="{job_setting['job_name']}"  # Name of the project/job directory under ROOT
 
@@ -824,7 +824,7 @@ N_FEP_TASKS=$(( 2 * NREP * NLAMBDA ))  # Expected equilibrium FEP array size
         ligand_destination = (
             task_directory / f"{job_name}_ligand{ligand_source.suffix}"
         )
-        submission_directory = Path(__file__).resolve().parents[2] / "job_submit"
+        submission_directory = Path(__file__).resolve().parents[3] / "job_submit"
         submission_files = (
             "job_submit.sh",
             "load_module.sh",
@@ -838,9 +838,9 @@ N_FEP_TASKS=$(( 2 * NREP * NLAMBDA ))  # Expected equilibrium FEP array size
             "ResAlchemFEP_setup.sh": "02_system_setup.sh",
             "run_fep_pipeline.sh": "03_run_fep_pipeline.sh",
         }
-        ions_mdp_source = Path(__file__).resolve().parents[1] / "mdp" / "ions.mdp"
+        ions_mdp_source = Path(__file__).resolve().parents[2] / "mdp" / "ions.mdp"
         ions_mdp_destination = task_directory / "mdp" / "ions.mdp"
-        fep_mdp_source = Path(__file__).resolve().parents[1] / "mdp" / "fep_base.mdp"
+        fep_mdp_source = Path(__file__).resolve().parents[2] / "mdp" / "fep_base.mdp"
         fep_mdp_destination = task_directory / "mdp" / "fep_base.mdp"
 
         try:

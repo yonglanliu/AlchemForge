@@ -8,105 +8,49 @@
 #SBATCH --mem=1G
 #SBATCH --time=00:10:00
 
-#SBATCH --output=logs/fep_master_%j.out
-#SBATCH --error=logs/fep_master_%j.err
+set -euo pipefail
 
 
 # ============================================================
-# SAFETY GUARD
+# Configuration
 #
-# Do not source this script.
-#
-# Correct:
-#
-#     sbatch scripts/run_fep_pipeline.sh
-#
+# Under sbatch, BASH_SOURCE points to Slurm's spool copy.
+# Use the original submission directory instead.
+# A config path may also be supplied explicitly as argument 1.
 # ============================================================
 
-if [[ "${BASH_SOURCE[0]}" != "${0}" ]]; then
+SUBMIT_DIR="${SLURM_SUBMIT_DIR:-$PWD}"
+CONFIG_FILE="${1:-${SUBMIT_DIR}/ResAlchemFEP_config.inp}"
+CONFIG_FILE="$(readlink -f "${CONFIG_FILE}")"
 
-    echo
-    echo "ERROR: Do not source run_fep_pipeline.sh"
-    echo
-    echo "Use:"
-    echo
-    echo "    sbatch scripts/run_fep_pipeline.sh"
-    echo
-
-    return 1
+if [[ ! -f "${CONFIG_FILE}" ]]; then
+    echo "ERROR: Project config not found:" >&2
+    echo "    ${CONFIG_FILE}" >&2
+    exit 1
 fi
 
-
-# ============================================================
-# Error handling
-# ============================================================
-
-set -e
-
-
-# ============================================================
-# Project root
-# ============================================================
-
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-ROOT="${ROOT:-$(cd "${SCRIPT_DIR}/../.." && pwd)}"
-ENV_SCRIPT="${SCRIPT_DIR}/load_module.sh"
-
-cd "${ROOT}"
-
-
-# ============================================================
-# Load environment
-# ============================================================
-
-
-if [[ -f "${ROOT}/pmx_env/bin/activate" ]]; then
-    source "${ROOT}/pmx_env/bin/activate"
-fi
-
-CONFIG_FILE="${1:-${ROOT}/${JOB_NAME}/${JOB_NAME}_config.inp}"
-
+echo "Config file: ${CONFIG_FILE}"
 source "${CONFIG_FILE}"
-
-# SLURM may execute a submitted copy from /var/spool. Resolve task files
-# from the persistent project directory instead of BASH_SOURCE.
-SCRIPT_DIR="${ROOT}/${JOB_NAME}"
-ENV_SCRIPT="${SCRIPT_DIR}/load_module.sh"
-LIGAND_SCRIPT="${SCRIPT_DIR}/01_para_ligand.sh"
-SYSTEM_SCRIPT="${SCRIPT_DIR}/02_system_setup.sh"
-FEP_SCRIPT="${SCRIPT_DIR}/ResAlchemFEP.sh"
 
 
 # ============================================================
 # Required configuration
 # ============================================================
 
-: "${JOB_NAME:?JOB_NAME must be defined in ?CONFIG_FILE}"
-
-: "${START_REP:?START_REP must be defined in ?CONFIG_FILE}"
-
-: "${NREP:?NREP must be defined in ?CONFIG_FILE}"
-
-: "${NLAMBDA:?NLAMBDA must be defined in ?CONFIG_FILE}"
-
-: "${MAX_FEP_JOBS:?MAX_FEP_JOBS must be defined in ?CONFIG_FILE}"
-
-: "${FEP_DT_PS:?FEP_DT_PS must be defined in ?CONFIG_FILE}"
-
-: "${FEP_NVT_PS:?FEP_NVT_PS must be defined in ?CONFIG_FILE}"
-
-: "${FEP_NPT_PS:?FEP_NPT_PS must be defined in ?CONFIG_FILE}"
-
-: "${FEP_PROD_NS:?FEP_PROD_NS must be defined in ?CONFIG_FILE}"
-
-: "${FEP_NVT_STEPS:?FEP_NVT_STEPS must be defined in ?CONFIG_FILE}"
-
-: "${FEP_NPT_STEPS:?FEP_NPT_STEPS must be defined in ?CONFIG_FILE}"
-
-: "${FEP_PROD_STEPS:?FEP_PROD_STEPS must be defined in ?CONFIG_FILE}"
-
-: "${FEP_LAMBDA_FUNCTION:?FEP_LAMBDA_FUNCTION must be defined in ?CONFIG_FILE}"
-
+: "${WORK_DIR:?WORK_DIR must be defined in CONFIG_FILE}"
+: "${JOB_NAME:?JOB_NAME must be defined in CONFIG_FILE}"
+: "${START_REP:?START_REP must be defined in CONFIG_FILE}"
+: "${NREP:?NREP must be defined in CONFIG_FILE}"
+: "${NLAMBDA:?NLAMBDA must be defined in CONFIG_FILE}"
+: "${MAX_FEP_JOBS:?MAX_FEP_JOBS must be defined in CONFIG_FILE}"
+: "${FEP_DT_PS:?FEP_DT_PS must be defined in CONFIG_FILE}"
+: "${FEP_NVT_PS:?FEP_NVT_PS must be defined in CONFIG_FILE}"
+: "${FEP_NPT_PS:?FEP_NPT_PS must be defined in CONFIG_FILE}"
+: "${FEP_PROD_NS:?FEP_PROD_NS must be defined in CONFIG_FILE}"
+: "${FEP_NVT_STEPS:?FEP_NVT_STEPS must be defined in CONFIG_FILE}"
+: "${FEP_NPT_STEPS:?FEP_NPT_STEPS must be defined in CONFIG_FILE}"
+: "${FEP_PROD_STEPS:?FEP_PROD_STEPS must be defined in CONFIG_FILE}"
+: "${FEP_LAMBDA_FUNCTION:?FEP_LAMBDA_FUNCTION must be defined in CONFIG_FILE}"
 
 # ============================================================
 # Derived replicate range
@@ -126,7 +70,7 @@ END_REP=$(( START_REP + NREP - 1 ))
 # Project directories
 # ============================================================
 
-PROJECT_DIR="${ROOT}/${JOB_NAME}"
+PROJECT_DIR="${WORK_DIR}/${JOB_NAME}"
 
 LOG_DIR="${PROJECT_DIR}/logs"
 
@@ -142,7 +86,6 @@ echo "============================================================"
 echo "Equilibrium FEP master pipeline"
 echo "============================================================"
 echo "Date:          $(date)"
-echo "Root:          ${ROOT}"
 echo "Job name:      ${JOB_NAME}"
 echo "Project dir:   ${PROJECT_DIR}"
 echo "Master job:    ${SLURM_JOB_ID:-manual}"
@@ -150,37 +93,42 @@ echo "============================================================"
 
 
 # ============================================================
-# Pipeline scripts
+# Pipeline script
+#
+# Preparation has already been completed.
+# Analysis is NOT submitted by this pipeline.
 # ============================================================
 
-check_script() {
-    local script="$1"
-
-    if [[ ! -r "${script}" ]]; then
-        echo "ERROR: Workflow script not found or not readable: ${script}"
-        exit 1
-    fi
-}
-
-check_script "${FEP_SCRIPT}"
-
-if [[ "${RUN_PREPARATION:-0}" == "1" ]]; then
-    check_script "${LIGAND_SCRIPT}"
-    check_script "${SYSTEM_SCRIPT}"
-    check_script "${ENV_SCRIPT}"
-    source "${ENV_SCRIPT}"
-
-    echo "Running ligand parameterization..."
-    source "${LIGAND_SCRIPT}" "${CONFIG_FILE}"
-
-    echo "Running system setup..."
-    source "${SYSTEM_SCRIPT}" "${CONFIG_FILE}"
-fi
+FEP_SCRIPT="${PROJECT_DIR}/ResAlchemFEP.sh"
 
 
 # ============================================================
 # Helper: check script
 # ============================================================
+
+check_script() {
+
+    local script="$1"
+
+    if [[ ! -f "${script}" ]]; then
+
+        echo
+        echo "ERROR: Script not found:"
+        echo "    ${script}"
+
+        exit 1
+    fi
+
+
+    if [[ ! -r "${script}" ]]; then
+
+        echo
+        echo "ERROR: Script is not readable:"
+        echo "    ${script}"
+
+        exit 1
+    fi
+}
 
 
 # ============================================================
@@ -267,7 +215,7 @@ check_script "${FEP_SCRIPT}"
 
 
 check_file \
-    "${ROOT}/${JOB_NAME}/mdp/fep_base.mdp" \
+    "${PROJECT_DIR}/mdp/fep_base.mdp" \
     "base FEP MDP"
 
 
@@ -505,22 +453,18 @@ echo "Submit parallel FEP array"
 echo "============================================================"
 
 
-FEP_SUBMIT_ARGS=(
-    --job-name="${JOB_NAME}_fep"
-    --partition="${FEP_PARTITION:-gpu}"
-    --gres="gpu:${FEP_GPUS:-1}"
-    --cpus-per-task="${FEP_CPUS_PER_TASK:-1}"
-    --output="${LOG_DIR}/fep_%A_%a.out"
-    --error="${LOG_DIR}/fep_%A_%a.err"
-    --array="${FEP_ARRAY}"
+# Ensure the log directory exists before sbatch tries to open its files.
+mkdir -p "${LOG_DIR}"
+
+FEP_JOB=$(
+    submit_job \
+        --job-name="${JOB_NAME}_fep" \
+        --array="${FEP_ARRAY}" \
+        --output="${LOG_DIR}/fep_%A_%a.out" \
+        --error="${LOG_DIR}/fep_%A_%a.err" \
+        --export="ALL,CONFIG_FILE=${CONFIG_FILE}" \
+        "${FEP_SCRIPT}"
 )
-
-if [[ -n "${PREVIOUS_JOB_ID:-}" ]]; then
-    FEP_SUBMIT_ARGS+=(--dependency="afterok:${PREVIOUS_JOB_ID%%;*}")
-fi
-
-FEP_SUBMIT_ARGS+=("${FEP_SCRIPT}" "${CONFIG_FILE}")
-FEP_JOB=$(submit_job "${FEP_SUBMIT_ARGS[@]}")
 
 
 echo
@@ -537,7 +481,7 @@ echo "    rep_${START_REP} through rep_${END_REP}"
 
 echo
 echo "Dependency:"
-echo "    ${PREVIOUS_JOB_ID:-none}"
+echo "    none"
 
 
 # ============================================================

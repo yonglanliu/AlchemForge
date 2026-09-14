@@ -1,83 +1,105 @@
 #!/usr/bin/env bash
 
 #SBATCH --job-name=rbfe_fep
-#SBATCH --partition=${PARTITION:-gpu}
+#SBATCH --partition=gpu
 #SBATCH --nodes=1
 #SBATCH --ntasks=1
 #SBATCH --cpus-per-task=8
-#SBATCH --gres=gpu:${GPUS:-1}
+#SBATCH --gres=gpu:1
 #SBATCH --mem=8G
-#SBATCH --time=10:00:00
+#SBATCH --time=06:00:00
 
 # Placeholder only.
 # run_fep_pipeline.sh overrides this with --array.
 #SBATCH --array=0-0
 
-#SBATCH --output=logs/fep_%A_%a.out
-#SBATCH --error=logs/fep_%A_%a.err
+# NOTE:
+# Do not use shell variables such as ${WORK_DIR} or ${JOB_NAME}
+# in #SBATCH --output/--error directives. The master submission
+# script should pass --output and --error explicitly.
+
+set -euo pipefail
 
 
 # ============================================================
-# Safety guard
+# Required values from the master submission
 # ============================================================
 
-if [[ "${BASH_SOURCE[0]}" != "${0}" ]]; then
-
-    echo
-    echo "ERROR: Do not source 02_fep.sh"
-    echo
-    echo "This script is submitted by run_fep_pipeline.sh."
-    echo
-
-    return 1
-fi
+: "${CONFIG_FILE:?CONFIG_FILE was not passed by the master submission}"
 
 
 # ============================================================
-# Error handling
+# Validate and load project config
 # ============================================================
 
-set -e
-
-
-# ============================================================
-# Project root
-# ============================================================
-
-CONFIG_FILE="${1:-}"
-if [[ -z "${CONFIG_FILE}" || ! -f "${CONFIG_FILE}" ]]; then
-    echo "ERROR: FEP configuration file was not provided or does not exist." >&2
+if [[ ! -f "${CONFIG_FILE}" ]]; then
+    echo "ERROR: Project config not found:" >&2
+    echo "    ${CONFIG_FILE}" >&2
     exit 1
 fi
 
-CONFIG_FILE="$(readlink -f "${CONFIG_FILE}")"
+echo "Config file: ${CONFIG_FILE}"
+
 source "${CONFIG_FILE}"
 
-SCRIPT_DIR="${ROOT}/${JOB_NAME}"
-cd "${ROOT}"
+: "${WORK_DIR:?WORK_DIR must be defined in CONFIG_FILE}"
+: "${JOB_NAME:?JOB_NAME must be defined in CONFIG_FILE}"
 
-if [[ -f "${SCRIPT_DIR}/load_module.sh" ]]; then
-    source "${SCRIPT_DIR}/load_module.sh"
+
+# ============================================================
+# Project directory
+# ============================================================
+
+SCRIPT_DIR="${WORK_DIR}/${JOB_NAME}"
+
+if [[ ! -d "${SCRIPT_DIR}" ]]; then
+    echo "ERROR: Project directory not found:" >&2
+    echo "    ${SCRIPT_DIR}" >&2
+    exit 1
+fi
+
+cd "${SCRIPT_DIR}"
+
+
+# ============================================================
+# Load software/modules
+# ============================================================
+
+MODULE_FILE="${SCRIPT_DIR}/load_modules.sh"
+
+if [[ -f "${MODULE_FILE}" ]]; then
+    source "${MODULE_FILE}"
+else
+    echo "WARNING: Module file not found:" >&2
+    echo "    ${MODULE_FILE}" >&2
 fi
 
 
 # ============================================================
-# JOB_NAME must be supplied by master submission
+# Locate GROMACS
 # ============================================================
 
-: "${JOB_NAME:?JOB_NAME must be defined in the FEP configuration}"
+if [[ -n "${GMX:-}" ]]; then
+    if ! command -v "${GMX}" >/dev/null 2>&1; then
+        echo "ERROR: GMX is set but cannot be executed:" >&2
+        echo "    GMX=${GMX}" >&2
+        exit 1
+    fi
+elif command -v gmx >/dev/null 2>&1; then
+    GMX="gmx"
+elif command -v gmx_mpi >/dev/null 2>&1; then
+    GMX="gmx_mpi"
+else
+    echo "ERROR: GROMACS executable was not found." >&2
+    echo "Load GROMACS in ${MODULE_FILE}, or set GMX explicitly." >&2
+    echo "PATH=${PATH}" >&2
+    exit 1
+fi
 
+export GMX
 
-# Preserve the submitted job name
-SUBMITTED_JOB_NAME="${JOB_NAME}"
-
-
-# ============================================================
-# Project-specific config
-# ============================================================
-
-# Do not allow a later environment value to redirect the job.
-JOB_NAME="${SUBMITTED_JOB_NAME}"
+echo "GROMACS executable: $(command -v "${GMX}")"
+"${GMX}" --version
 
 # ============================================================
 # Required parameters
@@ -104,8 +126,6 @@ echo "SLURM_ARRAY_TASK_ID: ${SLURM_ARRAY_TASK_ID}"
 echo "============================================================"
 
 
-
-
 # ============================================================
 # CPU / GPU
 # ============================================================
@@ -119,7 +139,7 @@ export OMP_NUM_THREADS
 # Base FEP MDP
 # ============================================================
 
-BASE_FEP_MDP="${ROOT}/${JOB_NAME}/mdp/fep_base.mdp"
+BASE_FEP_MDP="${SCRIPT_DIR}/mdp/fep_base.mdp"
 
 
 if [[ ! -s "${BASE_FEP_MDP}" ]]; then
@@ -137,11 +157,10 @@ fi
 # ============================================================
 
 generate_lambda_schedule() {
-
+    
     local function="$1"
     local n="$2"
     local power="$3"
-
 
     python - \
         "${function}" \
@@ -379,7 +398,7 @@ GEN_SEED=$(( 100000 + REP * 1000 + LAMBDA_STATE ))
 # Input setup
 # ============================================================
 
-SETUP="${ROOT}/${JOB_NAME}/${LEG}/rep_${REP}/setup"
+SETUP="${WORK_DIR}/${JOB_NAME}/${LEG}/rep_${REP}/setup"
 
 TOP="${SETUP}/topol.top"
 
@@ -410,7 +429,7 @@ fi
 # Work directory
 # ============================================================
 
-WORKDIR="${ROOT}/${JOB_NAME}/${LEG}/rep_${REP}/fep/${LAMBDA_DIR}"
+WORKDIR="${WORK_DIR}/${JOB_NAME}/${LEG}/rep_${REP}/fep/${LAMBDA_DIR}"
 
 mkdir -p "${WORKDIR}"
 
@@ -424,7 +443,7 @@ cd "${WORKDIR}"
 # redirection is required here.
 # ============================================================
 
-LOG_DIR="${ROOT}/${JOB_NAME}/logs"
+LOG_DIR="${SCRIPT_DIR}/logs"
 
 mkdir -p "${LOG_DIR}"
 
