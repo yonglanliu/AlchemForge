@@ -1,0 +1,36 @@
+# AlchemForge pip-side dependencies
+#
+# OpenFE, OpenFF Toolkit, ACPYPE, AmberTools, RDKit,
+# OpenBabel, mpi4py, and CUDA are managed by environment.yml.
+#
+
+# GUI
+PyQt5
+PyQtWebEngine
+QtPy
+
+# 3D visualization
+PyOpenGL
+PyOpenGL_accelerate
+moderngl
+pyvista
+pyvistaqt
+vtk
+pillow
+
+# File watching / development
+watchdog
+
+# Testing / development
+pytest
+pytest-qt
+ruff
+build
+
+# General utilities
+requests
+rich
+platformdirs
+
+# PyTorch with CUDA 12.6 support for Tesla P100
+torch==2.14.0 --index-url https://download.pytorch.org/whl/cu126

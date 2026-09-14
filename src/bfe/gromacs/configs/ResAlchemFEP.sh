@@ -22,6 +22,20 @@ set -euo pipefail
 
 
 # ============================================================
+# Activate AlchemForge environment
+# ============================================================
+
+source /data/${USER}/conda/etc/profile.d/conda.sh
+
+conda activate /vf/users/liuy48/conda/envs/.alchemforge
+
+echo "Python:"
+echo "    $(which python)"
+
+echo "Conda environment:"
+echo "    ${CONDA_PREFIX}"
+
+# ============================================================
 # Required values from the master submission
 # ============================================================
 
@@ -62,17 +76,13 @@ cd "${SCRIPT_DIR}"
 
 
 # ============================================================
-# Load software/modules
+# Load GROMACS module
 # ============================================================
-
-MODULE_FILE="${SCRIPT_DIR}/load_modules.sh"
-
-if [[ -f "${MODULE_FILE}" ]]; then
-    source "${MODULE_FILE}"
-else
-    echo "WARNING: Module file not found:" >&2
-    echo "    ${MODULE_FILE}" >&2
-fi
+GROMACS_PATH="$(python -c 'import bfe.gromacs, os; print(os.path.dirname(bfe.gromacs.__file__))')"
+echo "$GROMACS_PATH"
+MODULE_LOAD_FILE_PATH="${GROMACS_PATH}/configs/load_module.sh"
+echo "Loading GROMACS module from: ${MODULE_LOAD_FILE_PATH}"
+source "${MODULE_LOAD_FILE_PATH}"
 
 
 # ============================================================
@@ -139,7 +149,7 @@ export OMP_NUM_THREADS
 # Base FEP MDP
 # ============================================================
 
-BASE_FEP_MDP="${SCRIPT_DIR}/mdp/fep_base.mdp"
+BASE_FEP_MDP="${GROMACS_PATH}/mdp/fep_base.mdp"
 
 
 if [[ ! -s "${BASE_FEP_MDP}" ]]; then
@@ -1243,7 +1253,9 @@ echo "============================================================"
 echo "STEP 4: FEP production"
 echo "============================================================"
 
-
+# ------------------------------------------------------------
+# Case 1: Production already finished
+# ------------------------------------------------------------
 if [[ -s prod.log && \
       -s prod.gro && \
       -s dhdl.xvg ]] && \
@@ -1252,8 +1264,36 @@ then
 
     echo
     echo "Production already completed."
+    echo "Skipping production."
 
-else
+# ------------------------------------------------------------
+# Case 2: Production interrupted -> resume
+# ------------------------------------------------------------
+elif [[ -s prod.cpt && -s prod.tpr ]]
+then
+
+    echo
+    echo "Previous production run was interrupted."
+    echo "$(pwd)/prod.cpt"
+    echo
+    echo "Resuming simulation..."
+
+    ${GMX} mdrun \
+        -deffnm prod \
+        -cpi prod.cpt \
+        -append \
+        -ntomp "${OMP_NUM_THREADS}" \
+        ${MDRUN_FEP_OPTIONS:-${MDRUN_MD_OPTIONS:-}}
+
+# ------------------------------------------------------------
+# Case 3: Production has not started -> start from completed NPT
+# ------------------------------------------------------------
+elif [[ -s npt.gro && -s npt.cpt ]]
+then
+
+    echo
+    echo "Production has not started."
+    echo "Starting production from NPT output."
 
     rm -f \
         prod.tpr \
@@ -1265,7 +1305,6 @@ else
         prod.cpt \
         dhdl.xvg
 
-
     ${GMX} grompp \
         -f prod.mdp \
         -c npt.gro \
@@ -1273,7 +1312,6 @@ else
         -p "${TOP}" \
         -o prod.tpr \
         -maxwarn 1
-
 
     if [[ ! -s prod.tpr ]]; then
 
@@ -1283,15 +1321,20 @@ else
         exit 1
     fi
 
-
     ${GMX} mdrun \
         -deffnm prod \
         -dhdl dhdl.xvg \
         -ntomp "${OMP_NUM_THREADS}" \
         ${MDRUN_FEP_OPTIONS:-${MDRUN_MD_OPTIONS:-}}
 
-fi
+else
 
+    echo
+    echo "ERROR: Production cannot start."
+    echo "NPT output is missing or incomplete."
+    exit 1
+
+fi
 
 # ============================================================
 # Production QC

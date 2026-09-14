@@ -8,7 +8,32 @@
 #SBATCH --mem=1G
 #SBATCH --time=00:10:00
 
+
 set -euo pipefail
+
+# ============================================================
+# Activate AlchemForge environment
+# ============================================================
+
+source /data/${USER}/conda/etc/profile.d/conda.sh
+
+conda activate /vf/users/liuy48/conda/envs/.alchemforge
+
+echo "Python:"
+echo "    $(which python)"
+
+echo "Conda environment:"
+echo "    ${CONDA_PREFIX}"
+
+# ============================================================
+# Load GROMACS module
+# ============================================================
+GROMACS_PATH="$(python -c 'import bfe.gromacs, os; print(os.path.dirname(bfe.gromacs.__file__))')"
+echo "$GROMACS_PATH"
+MODULE_LOAD_FILE_PATH="${GROMACS_PATH}/configs/load_module.sh"
+echo "Loading GROMACS module from: ${MODULE_LOAD_FILE_PATH}"
+source "${MODULE_LOAD_FILE_PATH}"
+
 
 
 # ============================================================
@@ -20,7 +45,7 @@ set -euo pipefail
 # ============================================================
 
 SUBMIT_DIR="${SLURM_SUBMIT_DIR:-$PWD}"
-CONFIG_FILE="${1:-${SUBMIT_DIR}/ResAlchemFEP_config.inp}"
+CONFIG_FILE="${CONFIG_FILE:-${1:-${SUBMIT_DIR}/ResAlchemFEP_config.inp}}"
 CONFIG_FILE="$(readlink -f "${CONFIG_FILE}")"
 
 if [[ ! -f "${CONFIG_FILE}" ]]; then
@@ -31,6 +56,23 @@ fi
 
 echo "Config file: ${CONFIG_FILE}"
 source "${CONFIG_FILE}"
+
+# ============================================================
+# Normalize / validate simulation mode
+# ============================================================
+
+SIMULATION_MODE="${SIMULATION_MODE:-RESUME}"
+SIMULATION_MODE="${SIMULATION_MODE^^}"
+
+case "${SIMULATION_MODE}" in
+    OVERWRITE|SKIP|RESUME)
+        ;;
+    *)
+        echo "ERROR: Invalid SIMULATION_MODE: ${SIMULATION_MODE}"
+        echo "Allowed values: OVERWRITE, SKIP, RESUME"
+        exit 1
+        ;;
+esac
 
 
 # ============================================================
@@ -51,6 +93,7 @@ source "${CONFIG_FILE}"
 : "${FEP_NPT_STEPS:?FEP_NPT_STEPS must be defined in CONFIG_FILE}"
 : "${FEP_PROD_STEPS:?FEP_PROD_STEPS must be defined in CONFIG_FILE}"
 : "${FEP_LAMBDA_FUNCTION:?FEP_LAMBDA_FUNCTION must be defined in CONFIG_FILE}"
+: "${SIMULATION_MODE:?SIMULATION_MODE must be defined in CONFIG_FILE}"
 
 # ============================================================
 # Derived replicate range
@@ -89,6 +132,7 @@ echo "Date:          $(date)"
 echo "Job name:      ${JOB_NAME}"
 echo "Project dir:   ${PROJECT_DIR}"
 echo "Master job:    ${SLURM_JOB_ID:-manual}"
+echo "Simulation:    ${SIMULATION_MODE}"
 echo "============================================================"
 
 
@@ -318,6 +362,13 @@ do
             "${SETUP}/topol.top" \
             "${LEG} rep_${REP} topol.top"
 
+        if grep -q "/AlchemForge/.alchemforge_env/" "${SETUP}/topol.top"; then
+            echo
+            echo "ERROR: Stale old-environment path detected:"
+            echo "    ${SETUP}/topol.top"
+            grep -n "/AlchemForge/.alchemforge_env/" "${SETUP}/topol.top" || true
+            exit 1
+        fi
 
         echo "    PASS"
 
@@ -425,6 +476,10 @@ echo "Production:"
 echo "    Production / window:     ${FEP_PROD_NS} ns"
 echo "    Production steps:        ${FEP_PROD_STEPS}"
 
+echo
+echo "Mode:"
+echo "    Simulation mode:         ${SIMULATION_MODE}"
+
 
 echo
 echo "SLURM:"
@@ -438,6 +493,60 @@ echo "    Array:                   ${FEP_ARRAY}"
 
 echo
 echo "============================================================"
+
+
+# ============================================================
+# Simulation mode handling
+# ============================================================
+
+case "${SIMULATION_MODE}" in
+
+    OVERWRITE)
+        echo
+        echo "============================================================"
+        echo "SIMULATION_MODE = OVERWRITE"
+        echo "============================================================"
+        echo "Existing FEP simulation directories for requested replicates"
+        echo "will be removed before submission."
+
+        for LEG in apo bound
+        do
+            for REP in $(seq "${START_REP}" "${END_REP}")
+            do
+                FEP_DIR="${PROJECT_DIR}/${LEG}/rep_${REP}/fep"
+
+                if [[ -d "${FEP_DIR}" ]]; then
+                    echo "Removing:"
+                    echo "    ${FEP_DIR}"
+                    rm -rf "${FEP_DIR}"
+                fi
+            done
+        done
+        ;;
+
+    SKIP)
+        echo
+        echo "============================================================"
+        echo "SIMULATION_MODE = SKIP"
+        echo "============================================================"
+        echo "FEP submission is skipped."
+        echo "Prepared systems remain unchanged."
+        echo "============================================================"
+
+        exit 0
+        ;;
+
+    RESUME)
+        echo
+        echo "============================================================"
+        echo "SIMULATION_MODE = RESUME"
+        echo "============================================================"
+        echo "Existing FEP directories are preserved."
+        echo "Worker jobs may resume from available checkpoints."
+        echo "============================================================"
+        ;;
+
+esac
 
 
 # ============================================================
@@ -462,7 +571,7 @@ FEP_JOB=$(
         --array="${FEP_ARRAY}" \
         --output="${LOG_DIR}/fep_%A_%a.out" \
         --error="${LOG_DIR}/fep_%A_%a.err" \
-        --export="ALL,CONFIG_FILE=${CONFIG_FILE}" \
+        --export="ALL,CONFIG_FILE=${CONFIG_FILE},SIMULATION_MODE=${SIMULATION_MODE}" \
         "${FEP_SCRIPT}"
 )
 
@@ -506,6 +615,8 @@ nlambda=${NLAMBDA}
 n_fep_tasks=${N_FEP_TASKS}
 
 max_fep_jobs=${MAX_FEP_JOBS}
+
+simulation_mode=${SIMULATION_MODE}
 
 fep_array=${FEP_ARRAY}
 EOF

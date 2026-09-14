@@ -19,8 +19,8 @@ import argparse
 from dataclasses import dataclass
 from pathlib import Path
 
-import openmm as mm
-from openmm import app, unit
+import simulation.openmm as mm
+from simulation.openmm import app, unit
 
 
 # ============================================================

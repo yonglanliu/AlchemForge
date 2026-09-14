@@ -3,6 +3,29 @@
 set -e
 
 # ============================================================
+# Activate AlchemForge environment
+# ============================================================
+
+source /data/${USER}/conda/etc/profile.d/conda.sh
+
+conda activate /vf/users/liuy48/conda/envs/.alchemforge
+
+echo "Python:"
+echo "    $(which python)"
+
+echo "Conda environment:"
+echo "    ${CONDA_PREFIX}"
+
+# ============================================================
+# Load GROMACS module
+# ============================================================
+GROMACS_PATH="$(python -c 'import bfe.gromacs, os; print(os.path.dirname(bfe.gromacs.__file__))')"
+echo "$GROMACS_PATH"
+MODULE_LOAD_FILE_PATH="${GROMACS_PATH}/configs/load_module.sh"
+echo "Loading GROMACS module from: ${MODULE_LOAD_FILE_PATH}"
+source "${MODULE_LOAD_FILE_PATH}"
+
+# ============================================================
 # Configuration file
 #
 # Usage:
@@ -13,7 +36,7 @@ set -e
 # ============================================================
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-CONFIG_FILE="${1:-${SCRIPT_DIR}/ResAlchemFEP_config.inp}"
+CONFIG_FILE="${CONFIG_FILE:-${1:-${SCRIPT_DIR}/ResAlchemFEP_config.inp}}"
 
 REPO_ROOT="$(
     python -c '
@@ -32,6 +55,23 @@ fi
 
 CONFIG_FILE="$(readlink -f "${CONFIG_FILE}")"
 source "${CONFIG_FILE}"
+
+# ============================================================
+# Normalize / validate system setup mode
+# ============================================================
+
+SYSTEM_SETUP_MODE="${SYSTEM_SETUP_MODE:-SKIP}"
+SYSTEM_SETUP_MODE="${SYSTEM_SETUP_MODE^^}"
+
+case "${SYSTEM_SETUP_MODE}" in
+    OVERWRITE|SKIP)
+        ;;
+    *)
+        echo "ERROR: Invalid SYSTEM_SETUP_MODE: ${SYSTEM_SETUP_MODE}"
+        echo "Allowed values: OVERWRITE, SKIP"
+        exit 1
+        ;;
+esac
 
 echo "Config file:    ${CONFIG_FILE}"
 echo "Working Directory: ${WORK_DIR}"
@@ -55,10 +95,10 @@ REQUIRED_VARS=(
     LIGAND_RESNAME
     LIGAND_CHARGE
     LIGAND_CHARGE_METHOD
-    LIGAND_ITP
     JOB_NAME
     START_REP
     NREP
+    SYSTEM_SETUP_MODE
 )
 
 for var in "${REQUIRED_VARS[@]}"; do
@@ -98,7 +138,7 @@ PROJECT_DIR="${WORK_DIR}/${JOB_NAME}"
 mkdir -p "${PROJECT_DIR}"
 
 IONS_MDP="${PROJECT_DIR}/mdp/ions.mdp"
-cp "${REPO_ROOT}/src/alchemforge/mdp/ions.mdp" "${IONS_MDP}"
+cp "${GROMACS_PATH}/mdp/ions.mdp" "${IONS_MDP}"
 
 # ============================================================
 # Logging
@@ -128,6 +168,7 @@ echo "Config file:       ${CONFIG_FILE}"
 echo "Start replicate:   ${START_REP}"
 echo "End replicate:     ${END_REP}"
 echo "Replicates to add: ${NREP}"
+echo "System setup mode: ${SYSTEM_SETUP_MODE}"
 echo "============================================================"
 
 
@@ -276,32 +317,52 @@ mkdir -p "${LOG_DIR}"
 
 
 # ============================================================
-# Reuse existing prepared base systems when possible
-#
-# If both apo/setup and bound/setup already contain non-empty
-# system.gro and topol.top, the expensive preparation steps are
-# skipped and the script proceeds directly to replicate setup copy.
+# Base-system setup mode
 # ============================================================
 
 BASE_SETUP_READY=0
 
-if [[ -s "${APO_SETUP}/system.gro" && \
-      -s "${APO_SETUP}/topol.top" && \
-      -s "${BOUND_SETUP}/system.gro" && \
-      -s "${BOUND_SETUP}/topol.top" ]]; then
-
-    BASE_SETUP_READY=1
+if [[ "${SYSTEM_SETUP_MODE}" == "OVERWRITE" ]]; then
 
     echo
     echo "============================================================"
-    echo "Existing APO/BOUND base setups found"
+    echo "SYSTEM_SETUP_MODE = OVERWRITE"
     echo "============================================================"
-    echo "Reusing:"
-    echo "    ${APO_SETUP}"
-    echo "    ${BOUND_SETUP}"
-    echo
-    echo "Skipping common/APO/BOUND base-system preparation."
-    echo "============================================================"
+    echo "Removing existing APO/BOUND setup directories."
+
+    rm -rf "${APO_SETUP}" "${BOUND_SETUP}"
+    mkdir -p "${APO_SETUP}" "${BOUND_SETUP}"
+
+elif [[ "${SYSTEM_SETUP_MODE}" == "SKIP" ]]; then
+
+    if [[ -s "${APO_SETUP}/system.gro" && \
+          -s "${APO_SETUP}/topol.top" && \
+          -s "${BOUND_SETUP}/system.gro" && \
+          -s "${BOUND_SETUP}/topol.top" ]]; then
+
+        BASE_SETUP_READY=1
+
+        echo
+        echo "============================================================"
+        echo "SYSTEM_SETUP_MODE = SKIP"
+        echo "============================================================"
+        echo "Existing APO/BOUND base setups found."
+        echo "Reusing:"
+        echo "    ${APO_SETUP}"
+        echo "    ${BOUND_SETUP}"
+        echo "============================================================"
+
+    else
+
+        echo
+        echo "============================================================"
+        echo "SYSTEM_SETUP_MODE = SKIP"
+        echo "============================================================"
+        echo "Existing base setup is incomplete or missing."
+        echo "Building the missing system setup."
+        echo "============================================================"
+
+    fi
 fi
 
 
@@ -1497,7 +1558,8 @@ do
         # This makes the preparation script safe to rerun.
         # ----------------------------------------------------
 
-        if [[ -s "${REP_SETUP}/system.gro" && \
+        if [[ "${SYSTEM_SETUP_MODE}" == "SKIP" && \
+              -s "${REP_SETUP}/system.gro" && \
               -s "${REP_SETUP}/topol.top" ]]; then
 
             echo "REUSE:"
@@ -1506,13 +1568,18 @@ do
             continue
         fi
 
+        if [[ "${SYSTEM_SETUP_MODE}" == "OVERWRITE" && -d "${REP_SETUP}" ]]; then
+            echo "OVERWRITE:"
+            echo "    ${REP_SETUP}"
+            rm -rf "${REP_SETUP}"
+        fi
+
         mkdir -p "${REP_SETUP}"
 
         # ----------------------------------------------------
         # Copy the complete base setup.
         #
-        # If the directory exists but is incomplete, cp -a fills
-        # or refreshes setup files without touching rep_X/fep/.
+        # Only rep_X/setup is replaced. rep_X/fep is preserved.
         # ----------------------------------------------------
 
         cp -a "${BASE_SETUP}/." "${REP_SETUP}/"
@@ -1531,6 +1598,13 @@ do
         if [[ ! -s "${REP_SETUP}/topol.top" ]]; then
             echo "ERROR: topol.top missing:"
             echo "    ${REP_SETUP}/topol.top"
+            exit 1
+        fi
+
+        if grep -q "/AlchemForge/.alchemforge_env/" "${REP_SETUP}/topol.top"; then
+            echo "ERROR: Stale old-environment path detected in topology:"
+            echo "    ${REP_SETUP}/topol.top"
+            grep -n "/AlchemForge/.alchemforge_env/" "${REP_SETUP}/topol.top" || true
             exit 1
         fi
 

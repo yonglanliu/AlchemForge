@@ -1,7 +1,31 @@
 #!/usr/bin/env bash
 
+# ============================================================
+# Activate AlchemForge environment
+# ============================================================
+
+source /data/${USER}/conda/etc/profile.d/conda.sh
+
+conda activate /vf/users/liuy48/conda/envs/.alchemforge
+
+echo "Python:"
+echo "    $(which python)"
+
+echo "Conda environment:"
+echo "    ${CONDA_PREFIX}"
+
+# ============================================================
+# Load GROMACS module
+# ============================================================
+GROMACS_PATH="$(python -c 'import bfe.gromacs, os; print(os.path.dirname(bfe.gromacs.__file__))')"
+echo "$GROMACS_PATH"
+MODULE_LOAD_FILE_PATH="${GROMACS_PATH}/configs/load_module.sh"
+echo "Loading GROMACS module from: ${MODULE_LOAD_FILE_PATH}"
+source "${MODULE_LOAD_FILE_PATH}"
+
+
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-CONFIG_FILE="${1:-${SCRIPT_DIR}/ResAlchemFEP_config.inp}"
+CONFIG_FILE="${CONFIG_FILE:-${1:-${SCRIPT_DIR}/ResAlchemFEP_config.inp}}"
 
 if [[ ! -f "${CONFIG_FILE}" ]]; then
     echo "ERROR: Configuration file not found: ${CONFIG_FILE}"
@@ -11,6 +35,24 @@ fi
 
 CONFIG_FILE="$(readlink -f "${CONFIG_FILE}")"
 source "${CONFIG_FILE}"
+
+# ============================================================
+# Normalize / validate ligand preparation mode
+# ============================================================
+
+LIGAND_PREP_MODE="${LIGAND_PREP_MODE:-SKIP}"
+LIGAND_PREP_MODE="${LIGAND_PREP_MODE^^}"
+
+case "${LIGAND_PREP_MODE}" in
+    OVERWRITE|SKIP)
+        ;;
+    *)
+        echo "ERROR: Invalid LIGAND_PREP_MODE: ${LIGAND_PREP_MODE}"
+        echo "Allowed values: OVERWRITE, SKIP"
+        exit 1
+        ;;
+esac
+
 
 # ============================================================
 # Check required configuration variables
@@ -23,6 +65,7 @@ REQUIRED_VARS=(
     LIGAND_CHARGE
     LIGAND_CHARGE_METHOD
     JOB_NAME
+    LIGAND_PREP_MODE
 )
 
 for var in "${REQUIRED_VARS[@]}"; do
@@ -53,11 +96,7 @@ CHARGE_TOLERANCE=0.001
 # Define paths
 # ============================================================
 
-if [[ "${LIGAND_MOL2}" = /* ]]; then
-    LIGAND_INPUT="${LIGAND_MOL2}"
-else
-    LIGAND_INPUT="${WORK_DIR}/${LIGAND_MOL2}"
-fi
+LIGAND_INPUT="${LIGAND_MOL2}"
 
 # Absolute directory containing original MOL2 file.
 LIGAND_DIR="$(dirname "${LIGAND_INPUT}")"
@@ -194,10 +233,19 @@ fi
 #     -c bcc
 # ============================================================
 
-echo
-echo "============================================================"
-echo "3. Running ACPYPE"
-echo "============================================================"
+echo "Ligand preparation mode: ${LIGAND_PREP_MODE}"
+echo "ACPYPE executable:       $(command -v acpype)"
+echo "ACPYPE Python package:   $(python -c 'import acpype; print(acpype.__file__)')"
+echo "Antechamber:             $(command -v antechamber || true)"
+echo "SQM:                     $(command -v sqm || true)"
+
+if [[ "${LIGAND_PREP_MODE}" == "OVERWRITE" ]]; then
+    echo "Ligand preparation mode: OVERWRITE"
+
+    echo
+    echo "============================================================"
+    echo "3. Running ACPYPE"
+    echo "============================================================"
 
 cd "${LIGAND_PARAM_DIR}"
 
@@ -226,13 +274,22 @@ case "${LIGAND_CHARGE_METHOD}" in
         ;;
 esac
 
-acpype \
+"${CONDA_PREFIX}/bin/acpype" \
     -i "${LIGAND_INPUT}" \
     -b "${LIGAND_RESNAME}" \
     -c "${LIGAND_CHARGE_METHOD}" \
     -a gaff2 \
     -n "${LIGAND_NET_CHARGE}" \
     -o gmx
+
+elif [[ "${LIGAND_PREP_MODE}" == "SKIP" ]]; then
+    echo
+    echo "============================================================"
+    echo "3. Reusing existing ACPYPE output"
+    echo "============================================================"
+    echo "LIGAND_PREP_MODE = SKIP"
+    echo "Existing ligand parameters will be reused."
+fi
 
 
 # ============================================================
@@ -252,9 +309,14 @@ REQUIRED_OUTPUTS=(
 
 for file in "${REQUIRED_OUTPUTS[@]}"; do
 
-    if [[ ! -f "${file}" ]]; then
-        echo "ERROR: Expected ACPYPE output not found:"
+    if [[ ! -s "${file}" ]]; then
+        echo "ERROR: Required ACPYPE output not found or empty:"
         echo "    ${file}"
+        if [[ "${LIGAND_PREP_MODE}" == "SKIP" ]]; then
+            echo
+            echo "LIGAND_PREP_MODE=SKIP requires existing ligand parameters."
+            echo "Set LIGAND_PREP_MODE=OVERWRITE to regenerate them."
+        fi
         exit 1
     fi
 
@@ -317,9 +379,33 @@ echo "Expected ligand charge: ${LIGAND_CHARGE}"
 echo "ITP charge:             ${ITP_CHARGE}"
 
 
-python - <<PY
+if [[ "${LIGAND_CHARGE_METHOD}" == "user" ]]; then
+    MOL2_CHARGE=$(
+    awk '
+    /@<TRIPOS>ATOM/ {
+        in_atoms=1
+        next
+    }
+
+    /@<TRIPOS>BOND/ {
+        in_atoms=0
+    }
+
+    in_atoms && NF >= 9 {
+        q += $9
+    }
+
+    END {
+        printf("%.6f", q)
+    }
+    ' "${LIGAND_INPUT}"
+    )
+
+    echo "MOL2 charge:            ${MOL2_CHARGE}"
+
+    python - <<PY
 expected = float("${LIGAND_CHARGE}")
-mol2=float(0.0)
+mol2 = float("${MOL2_CHARGE}")
 itp = float("${ITP_CHARGE}")
 tol = float("${CHARGE_TOLERANCE}")
 
@@ -345,6 +431,26 @@ if abs(itp - mol2) > tol:
 
 print("Ligand charge QC: PASS")
 PY
+
+else
+    echo "Input MOL2 charge comparison: SKIPPED (AM1-BCC recalculates charges)"
+
+    python - <<PY
+expected = float("${LIGAND_CHARGE}")
+itp = float("${ITP_CHARGE}")
+tol = float("${CHARGE_TOLERANCE}")
+
+print(f"Allowed tolerance:      {tol:.6f}")
+
+if abs(itp - expected) > tol:
+    raise SystemExit(
+        f"ERROR: ITP charge mismatch. "
+        f"Expected {expected:.3f}, obtained {itp:.6f}."
+    )
+
+print("Ligand charge QC: PASS")
+PY
+fi
 
 
 # ============================================================
@@ -606,7 +712,7 @@ echo "Final TOP:"
 echo "    ${FINAL_TOP}"
 echo
 echo "Full log:"
-echo "    ${WORK_DIR}/${JOB_NAME}/logs/${LOG_FILE}"
+echo "    ${LOG_FILE}"
 echo
 echo "QC directory:"
 echo "    ${QC_DIR}"

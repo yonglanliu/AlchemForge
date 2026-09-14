@@ -1,0 +1,40 @@
+name: alchemforge
+
+channels:
+  - nvidia
+  - conda-forge
+
+dependencies:
+  - python=3.12
+  - pip
+
+  # Alchemical / molecular simulation stack
+  - openfe=1.12
+  - openff-toolkit
+  - acpype
+  - ambertools
+  - openmm=8.4.0
+
+  # CUDA
+  # Pin to CUDA 12.6 for Tesla P100 / Pascal compatibility.
+  - cuda-version=12.6
+  - cuda-toolkit=12.6
+
+  # Scientific stack
+  - numpy
+  - scipy
+  - pandas
+  - matplotlib
+  - rdkit
+  - openbabel
+  - pyyaml
+  - mpi4py
+
+  # Build support
+  - setuptools
+  - wheel
+  - cmake
+
+  # Pip-side GUI / development dependencies
+  - pip:
+      - -r requirements.txt

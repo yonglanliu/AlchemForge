@@ -8,13 +8,13 @@ from math import ceil, floor
 from typing import Iterable
 
 import numpy as np
-from openmm import Vec3, app
+from simulation.openmm import Vec3, app
 from openmm.app import Modeller, PDBFile, ForceField, Topology
 from openmm.unit import nanometer, molar, is_quantity, norm
 from copy import deepcopy
 from openmm.app.internal import compiled
 from collections import defaultdict, namedtuple
-from openmm import System, Context, NonbondedForce, AmoebaVdwForce, AmoebaMultipoleForce, CustomNonbondedForce, HarmonicBondForce, HarmonicAngleForce, VerletIntegrator, LangevinIntegrator, LocalEnergyMinimizer
+from simulation.openmm import System, Context, NonbondedForce, AmoebaVdwForce, AmoebaMultipoleForce, CustomNonbondedForce, HarmonicBondForce, HarmonicAngleForce, VerletIntegrator, LangevinIntegrator, LocalEnergyMinimizer
 from openmm.app.modeller import elem, _CellList
 from openmm.app.forcefield import AllBonds, CutoffNonPeriodic, CutoffPeriodic, DrudeGenerator, _getDataDirectories
 import sys

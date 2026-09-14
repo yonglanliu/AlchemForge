@@ -1,12 +1,18 @@
 #!/usr/bin/env bash
+# ============================================================
+# Activate AlchemForge environment
+# ============================================================
 
 echo "============================================================"
 echo "Loading AlchemForge environment"
 echo "============================================================"
 
-# AmberTools
+source /data/${USER}/conda/etc/profile.d/conda.sh
 
-module load amber/22-ambertools23.gcc
+conda activate /vf/users/liuy48/conda/envs/.alchemforge
+
+echo "Python: $(which python)"
+echo "Conda environment: ${CONDA_PREFIX}"
 
 # GROMACS
 

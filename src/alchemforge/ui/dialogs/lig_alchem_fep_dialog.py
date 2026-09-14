@@ -15,13 +15,15 @@ from PyQt5.QtWidgets import (
     QTabWidget,
     QVBoxLayout,
     QWidget,
+    QRadioButton,
+    QPlainTextEdit
 )
 
 import shutil
 import subprocess
 from pathlib import Path
 
-class ResAlchemFEPDialog(QDialog):
+class LigAlchemFEPDialog(QDialog):
     job_requested = pyqtSignal(str, str, str)
 
     def __init__(self, working_directory=None, parent=None):
@@ -29,7 +31,7 @@ class ResAlchemFEPDialog(QDialog):
 
         self.working_directory = working_directory
 
-        self.setWindowTitle("ResAlchemFEP Setup")
+        self.setWindowTitle("LigAlchemFEP Setup")
         self.resize(900, 680)
 
         self.build_ui()
@@ -37,7 +39,7 @@ class ResAlchemFEPDialog(QDialog):
     def build_ui(self):
         root = QVBoxLayout(self)
 
-        title = QLabel("Residue Alchemical FEP Setup")
+        title = QLabel("Ligand Alchemical FEP Setup")
         title.setStyleSheet(
             "font-size: 18pt; "
             "font-weight: 700; "
@@ -45,22 +47,52 @@ class ResAlchemFEPDialog(QDialog):
         )
 
         subtitle = QLabel(
-            "Configure the residue mutation, system, simulation, "
-            "and JOB SETTING parameters."
+            "Two engine options for Ligand Alchemical FEP calculation: OpenFE and GROMACS."
         )
         subtitle.setStyleSheet("color: #71839a;")
 
         root.addWidget(title)
         root.addWidget(subtitle)
+        root.addSpacing(5)
 
+        # Engine selection
+        options = QHBoxLayout()
+
+        self.openfe_radio = QRadioButton("OpenFE")
+        self.gromacs_radio = QRadioButton("GROMACS")
+
+        radio_style = """
+            QRadioButton {
+                font-size: 14px;
+                font-weight: bold;
+            }
+        """
+
+        self.openfe_radio.setStyleSheet(radio_style)
+        self.gromacs_radio.setStyleSheet(radio_style)
+
+        self.openfe_radio.setChecked(True)
+        self.engine = "OpenFE"
+
+        options.addWidget(self.openfe_radio)
+        options.addWidget(self.gromacs_radio)
+        options.addStretch()
+
+        root.addLayout(options)
+        root.addSpacing(5)
+
+        # Main tabs: build only once
         self.tabs = QTabWidget()
-        self.tabs.addTab(self.build_system_tab(), "System")
-        self.tabs.addTab(self.build_mutation_tab(), "Mutation")
-        self.tabs.addTab(self.build_simulation_tab(), "FEP Simulation")
+        self.tabs.addTab(self.build_system_tab(), "System Setup")
+        self.tabs.addTab(self.build_simulation_tab(), "FEP Simulation Protocal")
         self.tabs.addTab(self.build_job_setting_tab(), "Job Setting")
-
         root.addWidget(self.tabs, 1)
 
+        # Update UI when engine changes
+        self.openfe_radio.toggled.connect(self.update_engine_ui)
+        self.gromacs_radio.toggled.connect(self.update_engine_ui)
+
+        # Buttons
         buttons = QHBoxLayout()
 
         run_btn = QPushButton("Create Task")
@@ -97,7 +129,6 @@ class ResAlchemFEPDialog(QDialog):
         buttons.addStretch()
         buttons.addWidget(run_btn)
         buttons.addWidget(submit_btn)
-
         root.addLayout(buttons)
 
     def build_system_tab(self):
@@ -137,15 +168,20 @@ class ResAlchemFEPDialog(QDialog):
         ligand_container = QWidget()
         ligand_container.setLayout(ligand_row)
 
-        # Force field
-        self.forcefield_combo = QComboBox()
-        self.forcefield_combo.addItems(
-            [
-                "amber99sb-star-ildn-mut",
-                "amber14sb",
-                "charmm36m",
-            ]
+        # Force field container
+        self.forcefield_container = QWidget()
+        self.forcefield_layout = QVBoxLayout(self.forcefield_container)
+        self.forcefield_layout.setContentsMargins(0, 0, 0, 0)
+
+        self.forcefield = QPlainTextEdit()
+        self.forcefield.setPlainText(
+            "amber/ff14SB.xml\n"
+            "amber/tip3p_standard.xml\n"
+            "amber/tip3p_HFE_multivalent.xml\n"
+            "amber/phosaa10.xml"
         )
+        self.forcefield.setMaximumHeight(90)
+        self.forcefield_layout.addWidget(self.forcefield)
 
         # Water model
         self.water_combo = QComboBox()
@@ -153,7 +189,7 @@ class ResAlchemFEPDialog(QDialog):
 
         # Water box
         self.box_shape_combo = QComboBox()
-        self.box_shape_combo.addItems(["Octahedral", "Cubic", "Triclinic"])
+        self.box_shape_combo.addItems(["Octahedral", "Cubic"])
 
         self.box_size_spin = QDoubleSpinBox()
         self.box_size_spin.setRange(0.1, 100.0)
@@ -188,7 +224,7 @@ class ResAlchemFEPDialog(QDialog):
         # Rows
         layout.addRow("Input Protein structure:", protein_structure_container)
         layout.addRow("Input Ligand structure:", ligand_container)
-        layout.addRow("Protein force field:", self.forcefield_combo)
+        layout.addRow("Protein force field:", self.forcefield_container)
         layout.addRow("Water model:", self.water_combo)
         layout.addRow("Water box shape:", self.box_shape_combo)
         layout.addRow("Water box size:", self.box_size_spin)
@@ -200,6 +236,40 @@ class ResAlchemFEPDialog(QDialog):
 
         self.update_ion_controls()
         return widget
+
+    def update_engine_ui(self):
+        if self.gromacs_radio.isChecked():
+            self.engine = "GROMACS"
+        else:
+            self.engine = "OpenFE"
+
+        old_widget = self.forcefield
+        self.forcefield_layout.removeWidget(old_widget)
+        old_widget.deleteLater()
+
+        if self.engine == "GROMACS":
+            self.forcefield = QComboBox()
+            self.forcefield.addItems([
+                "amber99sb-star-ildn-mut",
+                "amber14sb",
+                "charmm36m",
+            ])
+        else:
+            self.forcefield = QPlainTextEdit()
+            self.forcefield.setPlainText(
+                "amber/ff14SB.xml\n"
+                "amber/tip3p_standard.xml\n"
+                "amber/tip3p_HFE_multivalent.xml\n"
+                "amber/phosaa10.xml"
+            )
+            self.forcefield.setMaximumHeight(90)
+
+        self.forcefield_layout.addWidget(self.forcefield)
+
+    def get_forcefield(self):
+        if isinstance(self.forcefield, QComboBox):
+            return self.forcefield.currentText()
+        return self.forcefield.toPlainText().strip()
 
     def update_ion_controls(self):
         use_ions = (
@@ -259,9 +329,6 @@ class ResAlchemFEPDialog(QDialog):
         self.dt_spin.setValue(0.002)
         self.dt_spin.setSuffix(" ps")
 
-        self.lambda_mode_combo = QComboBox()
-        self.lambda_mode_combo.addItems(["single"])
-
         self.nlambda_spin = QSpinBox()
         self.nlambda_spin.setRange(1, 1000)
         self.nlambda_spin.setValue(17)
@@ -281,6 +348,10 @@ class ResAlchemFEPDialog(QDialog):
         self.fep_lambda_power_spin.setRange(0.1, 10.0)
         self.fep_lambda_power_spin.setDecimals(2)
         self.fep_lambda_power_spin.setValue(2.0)
+
+        self.minimiation_steps = QSpinBox()
+        self.minimiation_steps.setRange(0, 1000000)
+        self.minimiation_steps.setValue(5000)
 
         self.fep_nvt_time_spin = QDoubleSpinBox()
         self.fep_nvt_time_spin.setRange(0.001, 100000.0)
@@ -306,12 +377,12 @@ class ResAlchemFEPDialog(QDialog):
 
         layout.addRow("Temperature:", self.temperature_spin)
         layout.addRow("Time step:", self.dt_spin)
-        layout.addRow("Lambda mode:", self.lambda_mode_combo)
         layout.addRow("Lambda windows:", self.nlambda_spin)
         layout.addRow("Replicates:", self.nrep_spin)
         layout.addRow("Start replicate:", self.start_rep_spin)
         layout.addRow("Lambda function:", self.fep_lambda_function_combo)
         layout.addRow("Lambda power:", self.fep_lambda_power_spin)
+        layout.addRow("Minimization steps:", self.minimiation_steps)
         layout.addRow("FEP NVT time:", self.fep_nvt_time_spin)
         layout.addRow("FEP NPT time:", self.fep_npt_time_spin)
         layout.addRow("FEP production time:", self.fep_production_time_spin)
@@ -393,7 +464,7 @@ class ResAlchemFEPDialog(QDialog):
             self,
             "Select Protein Structure",
             self.working_directory or "",
-            "Protein Structure Files (*.pdb *.gro *.mae *.maegz);;All Files (*)",
+            "Protein Structure Files (*.pdb *.gro);;All Files (*)",
         )
 
         if path:
@@ -404,7 +475,7 @@ class ResAlchemFEPDialog(QDialog):
             self,
             "Select Ligand Structure",
             self.working_directory or "",
-            "Ligand Structure Files (*.sdf *.mol2 *.mol *.pdb *.mae *.maegz);;All Files (*)",
+            "Ligand Structure Files (*.sdf *.mol2);;All Files (*)",
         )
 
         if path:
@@ -415,7 +486,7 @@ class ResAlchemFEPDialog(QDialog):
             "system": {
                 "protein_structure": self.structure_edit.text().strip(),
                 "ligand_structure": self.ligand_edit.text().strip(),
-                "forcefield": self.forcefield_combo.currentText(),
+                "forcefield": self.get_forcefield(),
                 "water_model": self.water_combo.currentText(),
                 "box_shape": self.box_shape_combo.currentText(),
                 "box_size_nm": self.box_size_spin.value(),
@@ -433,7 +504,6 @@ class ResAlchemFEPDialog(QDialog):
             "simulation": {
                 "temperature": self.temperature_spin.value(),
                 "dt": self.dt_spin.value(),
-                "lambda_mode": self.lambda_mode_combo.currentText(),
                 "nlambda": self.nlambda_spin.value(),
                 "nrep": self.nrep_spin.value(),
                 "start_rep": self.start_rep_spin.value(),
@@ -611,15 +681,6 @@ FEP_WALLTIME="{task_settings['fep']['walltime']}"
 
 
 # ============================================================
-# Mutation definition
-# ============================================================
-
-CHAIN="{mutation['chain']}"  # Chain ID of the residue being mutated
-RESID={mutation['residue_number']}  # Residue number to mutate
-MUT="{mutation['to_residue']}"  # Target residue name after mutation
-
-
-# ============================================================
 # Force field
 # ============================================================
 
@@ -712,7 +773,6 @@ DT_PS={simulation['dt']}        # MD timestep in picoseconds
 # ------------------------------------------------------------
 # FEP simulation
 # ------------------------------------------------------------
-LAMBDA_MODE="{simulation['lambda_mode']}"  # Lambda schedule mode for the alchemical transformation
 NLAMBDA={simulation['nlambda']}             # Number of lambda windows for the FEP schedule
 
 FEP_LAMBDA_FUNCTION="{simulation['fep_lambda_function']}"  # Lambda spacing scheme: cosine, linear, or power
@@ -720,6 +780,7 @@ FEP_LAMBDA_POWER={simulation['fep_lambda_power']}           # Exponent used when
 
 FEP_DT_PS={simulation['dt']}                 # Timestep used for the FEP MD integration, in ps
 
+MINIMIZATION_STEPS={simulation['minimization_steps']}  # Number of steps for energy minimization
 FEP_NVT_PS={simulation['fep_nvt_time']}                  # NVT equilibration length, in ns
 FEP_NPT_PS={simulation['fep_npt_time']}                  # NPT equilibration length, in ns
 FEP_PROD_NS={simulation['fep_production_time']}                  # Production run length, in ns
@@ -754,12 +815,6 @@ FEP_PROD_STEPS=$(
 )
 
 N_FEP_TASKS=$(( 2 * NREP * NLAMBDA ))  # Expected equilibrium FEP array size
-
-# Preparation and simulation modes
-LIGAND_PREP_MODE="OVERWRITE"  # Mode for ligand preparation: OVERWRITE or SKIP
-SYSTEM_SETUP_MODE="OVERWRITE"  # Mode for system preparation: OVERWRITE or SKIP
-SIMULATION_MODE="OVERWRITE"  # Mode for simulation setup: OVERWRITE, SKIP, or RESUME
-
 """
 
         try:
@@ -830,7 +885,7 @@ SIMULATION_MODE="OVERWRITE"  # Mode for simulation setup: OVERWRITE, SKIP, or RE
         ligand_destination = (
             task_directory / f"{job_name}_ligand{ligand_source.suffix}"
         )
-        submission_directory = Path(__file__).resolve().parents[3] / "bfe"/"gromacs"/ "configs"
+        submission_directory = Path(__file__).resolve().parents[3] / "job_submit"
         submission_files = (
             "job_submit.sh",
             "load_module.sh",
@@ -927,3 +982,12 @@ SIMULATION_MODE="OVERWRITE"  # Mode for simulation setup: OVERWRITE, SKIP, or RE
             str(config_path),
         )
         self.accept()
+
+if __name__ == "__main__":
+    from PyQt5.QtWidgets import QApplication
+    import sys
+
+    app = QApplication(sys.argv)
+    dialog = LigAlchemFEPDialog()
+    dialog.show()
+    sys.exit(app.exec_())
